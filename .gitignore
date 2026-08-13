@@ -1,0 +1,46 @@
+# ── Elixir / Mix build output ─────────────────────────────────────
+_build/
+deps/
+*.ez
+/doc/
+.elixir_ls/
+erl_crash.dump
+*.beam
+
+# ── Nerves firmware images & artifacts ────────────────────────────
+*.fw
+*.img
+
+# ── Rust NIF / port build output ──────────────────────────────────
+**/target/
+
+# ── Custom Nerves system: keep source, drop its build tree ────────
+nerves_system_libresdr/deps/
+nerves_system_libresdr/_build/
+nerves_system_libresdr/build.log
+
+# ── Third-party reference clones (see docs/PROVENANCE.md) ──────────
+# These are upstream repos vendored locally for reference. They carry
+# their own .git and licenses; clone them yourself from the URLs in
+# docs/PROVENANCE.md rather than committing them here.
+ref/
+
+# ── Local boot backups, unused trees, scratch ─────────────────────
+boot-backup-*/
+_unused_rootfs_root/
+_to_delete/
+**/_to_delete/
+
+# ── Local board / session scratch state (per-machine, not for VCS) ─
+.board-ip
+.board-log
+.state
+.state2
+.usb-up
+.mirror
+.confine
+
+# ── OS / editor cruft ─────────────────────────────────────────────
+.DS_Store
+*~
+*.swp

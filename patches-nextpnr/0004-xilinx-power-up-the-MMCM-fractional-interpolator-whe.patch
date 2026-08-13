@@ -1,0 +1,51 @@
+From 14dbb24d960910652cffb01cc94b009143164370 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 2 Aug 2026 21:21:02 +0000
+Subject: [PATCH 4/4] xilinx: power up the MMCM fractional interpolator when
+ FRAC is in use
+
+POWER_REG was hardcoded to 0x100 (the Vivado golden value for integer
+counters). With CLKFBOUT_MULT_F or a used CLKOUT0_DIVIDE_F carrying a
+non-zero eighth, the FRAC bits were emitted but the interpolator stayed at
+the integer-mode power setting; XAPP888 requires 0xFFFF there. A latent
+wrong-VALUE bug, invisible to name-level FASM audits.
+
+Silicon acceptance owed: a fractional build locking + readback of
+POWER_REG_POWER_REG_POWER_REG[15:0].
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Gf2fphDdyLaYeRc2E6YYje
+---
+ xilinx/fasm.cc | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/xilinx/fasm.cc b/xilinx/fasm.cc
+index a074eb8c..26417da9 100644
+--- a/xilinx/fasm.cc
++++ b/xilinx/fasm.cc
+@@ -2831,9 +2831,19 @@ struct FasmBackend
+         write_int_vector("FILTREG1_RESERVED[11:0]", 0x8, 12);
+ 
+         // Vivado uses 0x100 (integer counters) for non-fractional configs;
+-        // golden bitstreams confirm.  0xffff (the old value) is the XAPP888
+-        // "enable everything" setting and does not match Vivado output.
+-        write_int_vector("POWER_REG_POWER_REG_POWER_REG[15:0]", 0x100, 16);
++        // golden bitstreams confirm.  When the fractional interpolator is in
++        // use (CLKFBOUT_MULT_F or a used CLKOUT0_DIVIDE_F with a non-zero
++        // eighth), XAPP888 requires the power register at 0xFFFF -- with
++        // 0x100 the FRAC bits are configured but the interpolator is
++        // powered down.
++        {
++            double mult_f = float_or_default(ci, "CLKFBOUT_MULT_F", 5.000);
++            double div0_f = float_or_default(ci, "CLKOUT0_DIVIDE_F", 1.000);
++            bool clkout0_used = get_net_or_empty(ci, ctx->id("CLKOUT0")) != nullptr;
++            bool frac_in_use = (floor(mult_f * 8) != floor(mult_f) * 8) ||
++                               (clkout0_used && floor(div0_f * 8) != floor(div0_f) * 8);
++            write_int_vector("POWER_REG_POWER_REG_POWER_REG[15:0]", frac_in_use ? 0xFFFF : 0x100, 16);
++        }
+         write_bit("LOCKREG3_RESERVED[0]");
+         write_int_vector("TABLE[9:0]", filter_lookup[clkfbout_mult - 1], 10);
+         pop(2);
+-- 
+2.43.0
+

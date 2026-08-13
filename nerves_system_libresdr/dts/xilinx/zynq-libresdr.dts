@@ -1,0 +1,187 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * LibreSDR (PlutoSDR clone, Zynq-7020, board rev 5)
+ * Facts derived from hz12opensource/libresdr patches + ADI hdl system_bd.tcl
+ * Radio (AD9364) intentionally omitted: driven from userspace via UIO.
+ */
+/dts-v1/;
+#include "zynq-7000.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
+/ {
+	model = "LibreSDR (Zynq-7020)";
+	compatible = "libresdr,zynq-libresdr", "xlnx,zynq-7000";
+
+	aliases {
+		ethernet0 = &gem0;
+		serial0 = &uart0;
+		mmc0 = &sdhci0;
+	};
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0x0 0x40000000>;/* 1 GB */
+	};
+
+	/*
+	 * A physically contiguous buffer at a FIXED address for PCAP
+	 * configuration readback.
+	 *
+	 * devcfg's DMA engine takes PHYSICAL addresses, so reading configuration
+	 * memory back out of the PL needs a contiguous, word-aligned buffer that
+	 * the kernel is not using. Userspace cannot allocate one: an mmap'd page
+	 * is virtual, its physical backing is not contiguous beyond a page, and
+	 * pointing a DMA engine at a guessed physical address writes frame data
+	 * over live kernel memory, which is not a recoverable mistake.
+	 *
+	 * `no-map` keeps the kernel from mapping it at all, so it is ours alone
+	 * and /dev/mem can map it -- the same reasoning already written up for
+	 * the SLCR aperture in native/fabric/src/lib.rs (mmap is not subject to
+	 * the valid_phys_addr_range() check that makes :file.pread fail with
+	 * :efault on non-RAM physical addresses).
+	 *
+	 * 4 MB, at the top of the 1 GB. Sized so the ENTIRE xc7z020
+	 * configuration memory (~4 MB) fits in one transfer rather than only a
+	 * single tile -- a whole-device readback is far more useful than a
+	 * per-tile one and costs nothing extra here.
+	 *
+	 * Chosen over a `mem=` kernel argument because bootargs on this board
+	 * come from the U-Boot environment in a raw partition, and there is no
+	 * fw_setenv on the target; editing that region by hand risks an
+	 * unbootable board with no recovery short of a card reader. A DTS node
+	 * is declarative, versioned, and reviewable.
+	 */
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		pcap_readback: pcap-readback@3fc00000 {
+			reg = <0x3fc00000 0x00400000>;
+			no-map;
+		};
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		led0 {
+			label = "led0:green";
+			gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "heartbeat";
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		button {
+			label = "Button";
+			linux,code = <BTN_MISC>;
+			interrupt-parent = <&gpio0>;
+			interrupts = <14 IRQ_TYPE_EDGE_FALLING>;
+		};
+	};
+};
+
+&clkc {
+	ps-clk-frequency = <50000000>;/* NOT the usual 33.333 MHz */
+
+	/*
+	 * Bitmask of FCLKs the clock driver holds enabled. Without this the
+	 * driver never takes a reference on fclk0, so the gate is off from the
+	 * start -- and clk_ignore_unused does NOT help, because that only
+	 * prevents disabling a clock that was already on.
+	 *
+	 * FCLK_CLK0 clocks the PL's AXI slave. With it gated, an AXI read into
+	 * the PL never gets a response and the CPU hangs forever: the Zynq
+	 * interconnect has no timeout. A correct bitstream looks completely
+	 * dead in exactly this way.
+	 */
+	fclk-enable = <0xf>;
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&gem0 {
+	status = "okay";
+	phy-mode = "rgmii-id";
+	phy-handle = <&phy0>;
+
+	phy0: ethernet-phy@0 {/* Marvell 88E1512 */
+		reg = <0>;
+		compatible = "ethernet-phy-ieee802.3-c22";
+		reset-gpios = <&gpio0 46 GPIO_ACTIVE_LOW>;
+	};
+};
+
+&sdhci0 {
+	status = "okay";
+	broken-cd;   /* xlnx,has-cd = 0 on this board */
+	disable-wp;
+	bus-width = <4>;
+};
+
+&watchdog0 {
+	status = "okay";
+};
+
+&usb0 {
+    status = "okay";
+    /*
+     * Peripheral, not "otg", and this is load-bearing.
+     *
+     * In OTG mode ci_hdrc picks its role from ID/VBUS at probe time. With no
+     * cable attached at power-up there is nothing to detect, so it never
+     * registers a UDC: /sys/class/udc stays empty, usb-gadget-init times out,
+     * and the board comes up with no USB console or network. That presents as
+     * an intermittent "ci_hdrc won't bind" bug, but it is fully determined by
+     * whether the OTG cable happened to be plugged in before power-up.
+     *
+     * This board is always the device -- it tethers to a PC or phone -- so
+     * fixing the role removes the ordering dependency entirely. The tradeoff
+     * is no USB host capability on this port.
+     */
+    dr_mode = "peripheral";
+    usb-phy = <&usb_phy0>;
+};
+
+/ {
+    /*
+     * The USB3320 ULPI transceiver is autonomous once out of reset, so mainline
+     * models it as a nop xceiv -- exactly as zynq-zed/zc702 do. Do NOT use the
+     * Xilinx vendor-tree "ulpi-phy" compatible: nothing in mainline matches it,
+     * so no usb_phy ever registers, ci_hdrc.0 sits in EPROBE_DEFER forever and
+     * no UDC is created. Likewise "xlnx,phy-reset-gpio" on &usb0 is vendor-only;
+     * mainline takes the reset here as reset-gpios. MIO47 is the USB PHY reset
+     * (active low); MIO46 is the Ethernet PHY reset.
+     */
+    /*
+     * usb_phy_generic requests its "vbus" regulator with
+     * devm_regulator_get_exclusive(), and the regulator core refuses to
+     * substitute a dummy for exclusive requests -- it fails probe with
+     * "dummy supplies not allowed for exclusive requests (id=vbus)".
+     * VBUS here is board-fixed 5V from the OTG connector, so model it as a
+     * fixed-regulator rather than leaving the supply unresolved.
+     */
+    usb_vbus: regulator-usb-vbus {
+        compatible = "regulator-fixed";
+        regulator-name = "usb-vbus";
+        regulator-min-microvolt = <5000000>;
+        regulator-max-microvolt = <5000000>;
+        regulator-always-on;
+    };
+
+    usb_phy0: phy0 {
+        compatible = "usb-nop-xceiv";
+        #phy-cells = <0>;
+        vbus-supply = <&usb_vbus>;
+        reset-gpios = <&gpio0 47 GPIO_ACTIVE_LOW>;
+    };
+};

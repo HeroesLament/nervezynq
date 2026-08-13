@@ -1,0 +1,20 @@
+CONFIG_ASH_GETOPTS=y
+CONFIG_BASENAME=y
+CONFIG_CUT=y
+CONFIG_EXPR=y
+CONFIG_EXPR_MATH_SUPPORT_64=y
+CONFIG_SED=y
+CONFIG_SLEEP=y
+
+
+# configfs USB gadget setup needs a symlink to attach the function to the
+# config; there is no other way to express that. head/sort are for debugging.
+CONFIG_LN=y
+CONFIG_HEAD=y
+CONFIG_SORT=y
+
+# devmem: mmap-based physical memory access. Needed to poke the PL at
+# 0x40000000 from userspace -- /dev/mem read() is capped at RAM by ARM's
+# valid_phys_addr_range(), so pread returns EFAULT there. mmap has no such
+# limit, and devmem is the smallest tool that uses it.
+CONFIG_DEVMEM=y

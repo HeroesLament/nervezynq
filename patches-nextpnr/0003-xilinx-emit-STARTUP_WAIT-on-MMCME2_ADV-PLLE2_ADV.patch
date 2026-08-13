@@ -1,0 +1,51 @@
+From 8553873a4451a4d6fa0183e6e0bb32a46a8acfc8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 2 Aug 2026 21:20:04 +0000
+Subject: [PATCH 3/4] xilinx: emit STARTUP_WAIT on MMCME2_ADV / PLLE2_ADV
+
+STARTUP_WAIT=TRUE was silently ignored; the documented tile bit
+(CMT_TOP_*.{MMCME2_ADV,PLLE2_ADV}.STARTUP_WAIT) is now emitted. The
+attribute may arrive as "TRUE"/"FALSE" netlist strings, so it goes through
+bool_param_or_default. Scope note in-source: the interaction with the
+global COR0 LOCK_CYCLE startup option is not modelled and the
+hold-DONE-until-lock behaviour has not been verified on silicon.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Gf2fphDdyLaYeRc2E6YYje
+---
+ xilinx/fasm.cc | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/xilinx/fasm.cc b/xilinx/fasm.cc
+index b710f115..a074eb8c 100644
+--- a/xilinx/fasm.cc
++++ b/xilinx/fasm.cc
+@@ -2277,6 +2277,12 @@ struct FasmBackend
+         write_pll_clkout("CLKOUT4", ci);
+         write_pll_clkout("CLKOUT5", ci);
+ 
++        // Hold DONE until the PLL locks.  NOTE: the tile bit is emitted; any
++        // interaction with the global COR0 LOCK_CYCLE startup option is not
++        // modelled here and has not been verified on silicon.
++        if (bool_param_or_default(ci, "STARTUP_WAIT", false))
++            write_bit("STARTUP_WAIT");
++
+         std::string comp = str_or_default(ci->params, ctx->id("COMPENSATION"), "INTERNAL");
+         push("COMPENSATION");
+         if (comp == "INTERNAL" || comp == "ZHOLD") {
+@@ -2440,6 +2446,12 @@ struct FasmBackend
+         write_mmcm_clkout("CLKOUT5", ci);
+         write_mmcm_clkout("CLKOUT6", ci);
+ 
++        // Hold DONE until the MMCM locks.  NOTE: the tile bit is emitted; any
++        // interaction with the global COR0 LOCK_CYCLE startup option is not
++        // modelled here and has not been verified on silicon.
++        if (bool_param_or_default(ci, "STARTUP_WAIT", false))
++            write_bit("STARTUP_WAIT");
++
+         std::string comp = str_or_default(ci->params, id_COMPENSATION, "INTERNAL");
+         push("COMP");
+         if (comp == "ZHOLD" || comp == "INTERNAL") {
+-- 
+2.43.0
+

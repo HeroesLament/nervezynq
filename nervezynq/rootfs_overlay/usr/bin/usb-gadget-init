@@ -1,0 +1,91 @@
+#!/bin/sh
+# CDC-ECM + CDC-ACM USB gadget via configfs. Busybox here lacks head/sort/seq,
+# so this uses only shell builtins.
+#
+# Deliberately NOT "set -e". This script runs from erlinit --pre-run-exec, so
+# aborting halfway leaves a half-built gadget AND no diagnostic. Every step
+# that can legitimately fail is handled and logged instead; the script always
+# exits 0 so a missing USB console never blocks boot.
+
+log() { echo "usb-gadget-init: $*"; }
+
+DRV=/sys/bus/platform/drivers/ci_hdrc
+G=/sys/kernel/config/usb_gadget/nerves
+MAX_WAIT=30
+
+# ci_hdrc.0 is created by the chipidea-usb2 glue but never auto-binds on this
+# platform (not in devices_deferred, no probe error). Forcing the bind works.
+#
+# The bind MUST be retried inside the wait loop: the platform device can be
+# created well after this script starts (the PHY probe defers), so a single
+# attempt up front silently loses the race and we sit out the whole timeout
+# waiting for a UDC that was never going to appear.
+i=0
+UDC=""
+while [ "$i" -lt "$MAX_WAIT" ]; do
+    set -- /sys/class/udc/*
+    if [ -e "$1" ]; then
+        UDC=${1##*/}
+        break
+    fi
+
+    if [ -d "$DRV" ] && [ ! -e "$DRV/ci_hdrc.0" ]; then
+        echo ci_hdrc.0 > "$DRV/bind" 2>/dev/null || true
+    fi
+
+    i=$((i + 1))
+    sleep 1
+done
+
+if [ -z "$UDC" ]; then
+    log "no UDC after ${MAX_WAIT}s - USB console/network unavailable this boot"
+    exit 0
+fi
+log "UDC $UDC ready after ${i}s"
+
+# An existing gadget dir is only "done" if it actually has a UDC bound.
+# A leftover from a partial run must be finished, not skipped.
+if [ -e "$G" ]; then
+    if [ -s "$G/UDC" ]; then
+        log "gadget already bound to $(cat "$G/UDC")"
+        exit 0
+    fi
+    log "found unbound gadget dir, completing setup"
+else
+    mkdir -p "$G" || { log "cannot create gadget dir"; exit 0; }
+fi
+
+cd "$G" || { log "cannot enter gadget dir"; exit 0; }
+
+echo 0x1209 > idVendor
+echo 0x0001 > idProduct
+echo 0x0200 > bcdUSB
+echo 0x0100 > bcdDevice
+
+mkdir -p strings/0x409
+echo "Nerves"           > strings/0x409/manufacturer
+echo "LibreSDR Console" > strings/0x409/product
+echo "0000000000000000" > strings/0x409/serialnumber
+
+# ecm = network (usb0 -> VintageNetDirect -> ssh over USB). acm = serial.
+# Fixed MACs so the host does not see a brand new interface every boot.
+mkdir -p functions/ecm.usb0
+echo "02:1a:35:00:01:22" > functions/ecm.usb0/dev_addr
+echo "02:1a:35:00:01:23" > functions/ecm.usb0/host_addr
+mkdir -p functions/acm.usb0
+
+mkdir -p configs/c.1/strings/0x409
+echo "CDC ECM + ACM" > configs/c.1/strings/0x409/configuration
+echo 250             > configs/c.1/MaxPower
+
+# Absolute paths: a relative link from configs/c.1 climbs out of configfs.
+ln -sf "$G/functions/ecm.usb0" "$G/configs/c.1/ecm.usb0"
+ln -sf "$G/functions/acm.usb0" "$G/configs/c.1/acm.usb0"
+
+if echo "$UDC" > UDC 2>/dev/null; then
+    log "bound CDC-ECM + CDC-ACM gadget to $UDC"
+else
+    log "FAILED to bind gadget to $UDC"
+fi
+
+exit 0

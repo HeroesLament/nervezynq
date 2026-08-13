@@ -1,0 +1,32 @@
+[package]
+name = "fabric"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "fabric"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fabric_port"
+path = "src/main.rs"
+
+# Reconfigures the PL by driving the DevC/PCAP block. Shares the crate because
+# it shares the /dev/mem concern, but it is a one-shot program rather than a
+# long-lived port: reconfiguration is rare enough that process startup is free,
+# and a one-shot has no state to get wedged.
+[[bin]]
+name = "devcfg_load"
+path = "src/devcfg.rs"
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = 2
+# A panic must terminate the process, not unwind. The BEAM's contract with a
+# port is the exit status; unwinding out of a thread holding a raw pointer into
+# the AXI aperture has nothing useful to offer on the way out.
+panic = "abort"
+strip = true

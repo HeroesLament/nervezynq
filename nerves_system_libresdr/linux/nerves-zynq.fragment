@@ -1,0 +1,76 @@
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_XZ=y
+CONFIG_F2FS_FS=y
+CONFIG_TMPFS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_WATCHDOG=y
+CONFIG_XILINX_WATCHDOG=y
+CONFIG_MMC=y
+CONFIG_MMC_SDHCI=y
+CONFIG_MMC_SDHCI_PLTFM=y
+CONFIG_MMC_SDHCI_OF_ARASAN=y
+CONFIG_MACB=y
+CONFIG_MARVELL_PHY=y
+CONFIG_SERIAL_XILINX_PS_UART=y
+CONFIG_SERIAL_XILINX_PS_UART_CONSOLE=y
+CONFIG_GPIO_ZYNQ=y
+CONFIG_UIO=y
+CONFIG_UIO_PDRV_GENIRQ=y
+CONFIG_UIO_DMEM_GENIRQ=y
+CONFIG_FPGA=y
+CONFIG_FPGA_MGR_ZYNQ_FPGA=y
+CONFIG_FPGA_BRIDGE=y
+CONFIG_FPGA_REGION=y
+CONFIG_OF_FPGA_REGION=y
+CONFIG_USB=y
+CONFIG_USB_SUPPORT=y
+CONFIG_USB_PHY=y
+CONFIG_USB_ULPI=y
+CONFIG_USB_ULPI_VIEWPORT=y
+CONFIG_USB_CHIPIDEA=y
+CONFIG_USB_CHIPIDEA_UDC=y
+CONFIG_USB_CHIPIDEA_GENERIC=y
+CONFIG_USB_GADGET=y
+CONFIG_USB_LIBCOMPOSITE=y
+CONFIG_USB_U_SERIAL=y
+CONFIG_USB_F_ACM=y
+# CONFIG_USB_G_SERIAL is not set
+
+# cpufreq-dt probes on zynq, fails to set the ARM clock (-EBUSY) and BUG()s
+# inside kernel_init -> panic before userspace. We don't need DVFS.
+# CONFIG_CPU_FREQ is not set
+# CONFIG_ARM_ZYNQ_CPUFREQ is not set
+# CONFIG_CPUFREQ_DT is not set
+# CONFIG_CPUFREQ_DT_PLATDEV is not set
+
+# vintage_net uses policy routing (one table per interface). Without these,
+# `ip route add ... table N` fails with EAFNOSUPPORT, RouteManager crashes,
+# and the whole vintage_net/mdns_lite tree shuts down.
+CONFIG_IP_ADVANCED_ROUTER=y
+CONFIG_IP_MULTIPLE_TABLES=y
+
+# Zynq PS watchdog is Cadence (cdns,wdt-r1p2), NOT the AXI/PL Xilinx IP.
+# Without this there is no /dev/watchdog0 and nerves_heart runs unprotected.
+CONFIG_CADENCE_WATCHDOG=y
+
+# erlinit mounts the v1 cpu/memory controllers for BEAM resource limits.
+CONFIG_CGROUPS=y
+CONFIG_MEMCG=y
+CONFIG_CGROUP_SCHED=y
+CONFIG_FAIR_GROUP_SCHED=y
+
+# configfs-based USB gadget. The legacy g_serial driver binds at init(), before
+# ci_hdrc has probed, prints "couldn't find an available UDC" and never retries.
+# configfs lets userspace bind the gadget AFTER the UDC exists.
+CONFIG_CONFIGFS_FS=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_ACM=y
+# CDC-ECM gives a usb0 netdev -> VintageNetDirect -> ssh over the OTG cable.
+# erlinit sets up its controlling terminal BEFORE --pre-run-exec runs, so a
+# configfs ACM console can never be ready in time; networking sidesteps that.
+CONFIG_USB_CONFIGFS_ECM=y
+
+# usb_phy_generic needs a real vbus regulator (see zynq-libresdr.dts)
+CONFIG_REGULATOR=y
+CONFIG_REGULATOR_FIXED_VOLTAGE=y
