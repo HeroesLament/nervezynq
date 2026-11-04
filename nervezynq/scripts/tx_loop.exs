@@ -408,6 +408,64 @@ defmodule Nervezynq.TxLoop do
     {:ok, %{burst_ms: ms, key: key, fun: r}}
   end
 
+  # --- ENSM pin control ---------------------------------------------------------
+  # TDD, level mode: CTRL1[1] drives ENABLE, CTRL1[2] drives TXNRX. ENABLE low
+  # = ALERT; ENABLE high = RX (TXNRX low) or TX (TXNRX high). TXNRX only moves
+  # while ENABLE is low. REG_ENSM_CONFIG_1 = LEVEL_MODE | ENSM_PIN_CTRL |
+  # TO_ALERT; REG_ENSM_CONFIG_2 gains SYNTH_ENABLE_PIN_CTRL_MODE and loses
+  # TXNRX_SPI_CTRL. dr-c, 2026-11-04: ALERT -> RX by ENABLE alone.
+  @ctrl1 0x10
+  @pin_enable 0x02
+  @pin_txnrx 0x04
+
+  defp pins(enable, txnrx) do
+    {:ok, c} = Nervezynq.Fabric.read32(@ctrl1)
+    v = (c &&& bnot(@pin_enable ||| @pin_txnrx)) ||| enable * @pin_enable ||| txnrx * @pin_txnrx
+    :ok = Nervezynq.Fabric.write32(@ctrl1, v)
+  end
+
+  @doc """
+  `true`: ENSM to ALERT over SPI, pins low, pin control on, ENABLE high (RX).
+  `false`: pin control off, pins low, ENSM to RX over SPI. While pin control
+  is on, nothing may write REG_ENSM_CONFIG_1 (`ENSM.set_state/2`,
+  `SDR.enable/1`): that turns pin control back off.
+  """
+  def pin_mode(true) do
+    {:ok, _} = ENSM.set_state(:alert)
+    pins(0, 0)
+    {:ok, c2} = AD9363.read(0x015)
+    :ok = AD9363.write(0x015, (c2 ||| 0x08) &&& bnot(0x10) &&& 0xFF)
+    :ok = AD9363.write(0x014, 0x19)
+    pins(1, 0)
+    Process.sleep(2)
+    ENSM.state()
+  end
+
+  def pin_mode(false) do
+    pins(0, 0)
+    {:ok, c2} = AD9363.read(0x015)
+    :ok = AD9363.write(0x015, c2 &&& bnot(0x08) &&& 0xFF)
+    ENSM.set_state(:rx)
+  end
+
+  @doc """
+  phy_key/2 under ENSM pin control: TX port enable, ENABLE low, TXNRX high,
+  ENABLE high (TX), `settle_us`, `fun.()`, sleep `ms`, ENABLE low, TXNRX low,
+  ENABLE high (RX), port off. No SPI.
+  """
+  def pin_key(fun, ms, settle_us \\ 0) when is_function(fun, 0) and is_integer(ms) and ms > 0 and ms <= @dma_max_burst_ms do
+    ctrl(enable: true)
+    pins(0, 1)
+    pins(1, 1)
+    if settle_us > 0, do: Process.sleep(div(settle_us + 999, 1000))
+    r = fun.()
+    Process.sleep(ms)
+    pins(0, 0)
+    pins(1, 0)
+    ctrl([])
+    {:ok, %{burst_ms: ms, fun: r}}
+  end
+
   @doc """
   Synchronous packet burst: key from DDR, sleep `ms` in this process, unkey.
   Unlike dma_burst/2 there is no separate unkey process and no SPI traffic
