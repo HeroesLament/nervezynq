@@ -383,6 +383,32 @@ defmodule Nervezynq.TxLoop do
   end
 
   @doc """
+  Key with the PHY driving the TX port (CTRL1[14], `MimoHalow.FabricTx`): no
+  DMA. TX port enable, ENSM -> TX, then `fun.()` (the CTRL3 writes that start
+  the fabric frame), sleep `ms`, ENSM -> ALERT, port off. The only AD9363
+  accesses are the two ENSM writes; the caller sets the attenuation once and
+  owns returning the ENSM to RX.
+  """
+  def phy_key(fun, ms) when is_function(fun, 0) and is_integer(ms) and ms > 0 and ms <= @dma_max_burst_ms do
+    dma_stop()
+    ctrl(enable: true)
+    key = ENSM.set_state(:tx)
+
+    r =
+      if match?({:ok, _}, key) do
+        r = fun.()
+        Process.sleep(ms)
+        r
+      else
+        :not_keyed
+      end
+
+    ENSM.set_state(:alert)
+    ctrl([])
+    {:ok, %{burst_ms: ms, key: key, fun: r}}
+  end
+
+  @doc """
   Synchronous packet burst: key from DDR, sleep `ms` in this process, unkey.
   Unlike dma_burst/2 there is no separate unkey process and no SPI traffic
   while keyed: AD9363 register writes are several SPI transfers with CS held
