@@ -7,14 +7,14 @@ defmodule NzScope.Scenes.Main do
   cheap. Text inputs are write-once from the model (`:ensure_widget`
   value only, never `:set`) to avoid the set → text_updated → set loop.
 
-  The waterfall is a wx_mvu `:layers` visual rather than a hand-written
+  The waterfall is a cedar `:layers` visual rather than a hand-written
   GL canvas: a colormapped scrolling image with two line overlays for the
   frequency ticks. Its dB range and its ticks are part of the declaration,
   so they arrive through the differ and only the FFT rows are sent as
   data.
   """
 
-  use WxMVU.Scene
+  use Cedar.Scene
   require Logger
 
   alias NzScope.Link
@@ -95,8 +95,8 @@ defmodule NzScope.Scenes.Main do
   end
 
   def handle_event({:ui_event, :clear_btn, :click}, model) do
-    WxMVU.Visual.send_data(:waterfall, {:history, :clear})
-    WxMVU.GLCanvas.send_data(:spectrum, :clear)
+    Cedar.Visual.send_data(:waterfall, {:history, :clear})
+    Cedar.GLCanvas.send_data(:spectrum, :clear)
     model
   end
 
@@ -314,7 +314,7 @@ defmodule NzScope.Scenes.Main do
   # survives a drag of the floor control. The spectrum is still a hand-rolled
   # canvas and still needs telling.
   defp apply_range(%{db_min: lo, db_max: hi} = model) when lo < hi do
-    WxMVU.GLCanvas.send_data(:spectrum, {:set_range, lo * 1.0, hi * 1.0})
+    Cedar.GLCanvas.send_data(:spectrum, {:set_range, lo * 1.0, hi * 1.0})
     model
   end
 
@@ -340,7 +340,7 @@ defmodule NzScope.Scenes.Main do
   # existence the way a send_data could, and does not need re-pushing on the
   # stats tick to self-heal.
   defp push_freq(%{freq: freq, fs: fs}) when is_integer(freq) and is_integer(fs) do
-    WxMVU.GLCanvas.send_data(:spectrum, {:set_freq, freq, fs})
+    Cedar.GLCanvas.send_data(:spectrum, {:set_freq, freq, fs})
   end
 
   defp push_freq(_), do: :ok

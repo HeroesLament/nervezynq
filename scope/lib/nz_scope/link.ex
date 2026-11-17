@@ -3,7 +3,7 @@ defmodule NzScope.Link do
   TCP client to the board-side `Nervezynq.WFTap` (or `NzScope.Sim`).
 
   Owns the hot path: every `{:iq, meta, binary}` frame is FFT'd here and the
-  dB bins go straight to the GL canvases via `WxMVU.GLCanvas.send_data/2`,
+  dB bins go straight to the GL canvases via `Cedar.GLCanvas.send_data/2`,
   bypassing the scene entirely — the same reason GLCanvas bypasses MVU
   diffing. The scene only hears about things at human rate: connect state,
   meta changes (freq/fs/gain), a 1 Hz stats tick, status/error terms.
@@ -218,9 +218,9 @@ defmodule NzScope.Link do
   defp notify(%{owner: pid}, msg), do: send(pid, {:scope_link, msg})
 
   # send_data is a no-op with a log line when the canvas isn't up yet;
-  # the try is for the headless case (tests) where wx_mvu isn't running.
+  # the try is for the headless case (tests) where cedar isn't running.
   defp to_canvas(id, msg) do
-    WxMVU.GLCanvas.send_data(id, msg)
+    Cedar.GLCanvas.send_data(id, msg)
   rescue
     _ -> :ok
   catch

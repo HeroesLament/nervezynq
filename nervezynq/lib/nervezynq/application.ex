@@ -41,16 +41,23 @@ defmodule Nervezynq.Application do
         # Completes the A/B failover contract: fwup arms the rollback with
         # upgrade_available=1, this clears it once the firmware proves
         # healthy. Without it, every OTA reverts after bootlimit.
-        {Nervezynq.FirmwareValidator, []}
+        {Nervezynq.FirmwareValidator, []},
+
+        # Erlang distribution on the USB gadget link, for the host-side
+        # campaign controller (hidden node, :erpc). Fails closed without
+        # /data/dist_cookie.
+        {Nervezynq.Dist, []}
       ] ++ fabric_children()
     end
   end
 
   # The PL control plane only exists on the LibreSDR. Every other target in
-  # this project has no programmable logic to talk to, and fabric_port would
-  # fail to mmap 0x4000_0000 on any of them.
+  # this project has no programmable logic to talk to, and `oxibit port` would
+  # fail to map the Zynq registers on any of them.
   if Mix.target() == :libresdr do
-    defp fabric_children(), do: [{Nervezynq.Fabric, []}]
+    # Autostart after the fabric: /data/autostart.exs brings a board up with
+    # no controller (bitstream, radio, applications). See Nervezynq.Autostart.
+    defp fabric_children(), do: [{Nervezynq.Fabric, []}, {Nervezynq.Autostart, []}]
   else
     defp fabric_children(), do: []
   end

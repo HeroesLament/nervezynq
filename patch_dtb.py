@@ -2,6 +2,12 @@
 """
 patch_dtb.py -- inject the PCAP readback reserved-memory node into the built DTB.
 
+OBSOLETE (2026-09-28). Do not use. The system now builds from source and
+nerves_system_libresdr/post-createfs.sh compiles zynq-libresdr.dtb from dts/ on
+every system build, so the DTS is the single source of truth (it already
+carries this node). Patching the artifact DTB by hand would be overwritten by
+the next system build. Kept only for the history below.
+
 ## Why this exists instead of just editing the DTS
 
 `nerves_system_libresdr` resolves to a PREBUILT PORTABLE ARTIFACT at

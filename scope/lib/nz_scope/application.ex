@@ -1,6 +1,6 @@
 defmodule NzScope.Application do
   @moduledoc false
-  # wx_mvu starts as a dependency application; by the time we run, the
+  # cedar starts as a dependency application; by the time we run, the
   # renderer and canvas supervisors exist. We add the Link (board client)
   # and then bring up the scene.
 
@@ -14,7 +14,7 @@ defmodule NzScope.Application do
 
     {:ok, sup} = Supervisor.start_link(children, strategy: :one_for_one, name: NzScope.Supervisor)
 
-    case WxMVU.start_scene(NzScope.Scenes.Main) do
+    case Cedar.start_scene(NzScope.Scenes.Main) do
       {:ok, _} -> :ok
       {:error, {:already_started, _}} -> :ok
     end
@@ -24,7 +24,7 @@ defmodule NzScope.Application do
 
   @doc "Hot-reload helper: tear the scene down and rebuild it."
   def reload do
-    WxMVU.stop_scene(NzScope.Scenes.Main)
-    WxMVU.start_scene(NzScope.Scenes.Main)
+    Cedar.stop_scene(NzScope.Scenes.Main)
+    Cedar.start_scene(NzScope.Scenes.Main)
   end
 end

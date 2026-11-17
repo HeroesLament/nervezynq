@@ -36,6 +36,10 @@ keys =
   |> Path.join(".ssh/id_{rsa,ecdsa,ed25519}.pub")
   |> Path.wildcard()
 
+# fabfarm's agent-less key (~/.ssh/config Host dr-*), baked in so farm access
+# survives a reboot instead of depending on a runtime-added key.
+keys = keys ++ Path.wildcard(Path.join(System.user_home!(), ".ssh/fabfarm_virt4.pub"))
+
 if keys == [],
   do:
     Mix.raise("""
@@ -59,10 +63,16 @@ config :vintage_net,
     {"eth0",
      %{
        type: VintageNetEthernet,
+       # stable per-board MAC, else the GEM comes up random each boot
+       mac_address: {Nervezynq.MacAddr, :eth0, []},
        ipv4: %{method: :dhcp}
      }},
     {"wlan0", %{type: VintageNetWiFi}}
   ]
+
+# Erlang distribution for the fabfarm controller. The farm boards sit on the
+# bench LAN (DHCP reservations), so dist binds eth0 instead of the usb0 gadget.
+config :nervezynq, Nervezynq.Dist, interface: "eth0"
 
 config :mdns_lite,
   # The `hosts` key specifies what hostnames mdns_lite advertises.  `:hostname`

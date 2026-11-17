@@ -4,7 +4,7 @@ defmodule Nervezynq.RegMap do
 
       defmodule Nervezynq.Regs do
         use Nervezynq.RegMap,
-          spec: "../../ehdl/designs/libresdr_radio/regmap.exs",
+          spec: "../../ehdlslop/designs/libresdr_radio/regmap.exs",
           ctrl_base: 0x08,
           status_base: 0x18
       end

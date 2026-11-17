@@ -306,22 +306,14 @@ defmodule Nervezynq.SDR do
     :ok
   end
 
+  # oxibit port refuses aperture access unless hardware says the PL is
+  # configured and the boundary open, so this is a clean early answer rather
+  # than the only line of defence.
   defp ensure_pl do
-    # PlLoad may not be compiled in every session; the devcfg PCFG_DONE bit
-    # through it is the clean gate when it is. Fall back to trusting the
-    # magic check below.
-    cond do
-      Code.ensure_loaded?(PlLoad) and function_exported?(PlLoad, :pcfg_done?, 0) ->
-        if PlLoad.pcfg_done?(), do: :ok, else: {:error, :pl_unconfigured}
-
-      true ->
-        :ok
-    end
+    if Fabric.ready?(), do: :ok, else: {:error, :pl_unconfigured}
   end
 
   defp ensure_axi do
-    Fabric.authorise()
-
     case Fabric.read32(0x00) do
       {:ok, @magic} -> :ok
       {:ok, other} -> {:error, {:bad_magic, other}}

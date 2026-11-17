@@ -40,8 +40,8 @@ defmodule Nervezynq.Sweep do
 
   ## Failure is not fatal to the run
 
-  A failed load leaves the PL blank and `Fabric` blocked — see `Nervezynq.PL`.
-  The sweep keeps going anyway: the next candidate's load re-authorises the bus
+  A failed load leaves the PL blank and `Fabric` access refused — see `Nervezynq.PL`.
+  The sweep keeps going anyway: the next candidate's load re-opens access
   if it succeeds. So one bad bitstream costs one line of output, not the run.
   """
 
@@ -152,10 +152,11 @@ defmodule Nervezynq.Sweep do
           :bad_bitstream
       end
     else
-      {:error, {:pl_unconfigured, rc, out}} ->
-        # Expected for some candidates: a bit flip can produce a bitstream the
-        # config engine rejects outright. Not a problem, and not a reason to stop.
-        IO.puts("#{idx} #{String.pad_trailing(segbit, 8)} LOAD_REJECTED rc=#{rc} #{out}")
+      {:error, %{"error" => kind} = e} when kind in ["rejected", "program"] ->
+        # Expected for some candidates: a bit flip can produce a bitstream that
+        # fails oxibit's checks or that the config engine rejects outright. Not
+        # a problem, and not a reason to stop.
+        IO.puts("#{idx} #{String.pad_trailing(segbit, 8)} LOAD_REJECTED #{kind} #{inspect(e)}")
         :load_rejected
 
       err ->
@@ -206,7 +207,7 @@ defmodule Nervezynq.Sweep do
   end
 
   @doc "Restore a known-good bitstream and prove the bus is back."
-  def restore(base_url \\ "http://172.31.248.126:8000/", good \\ "good.bin") do
+  def restore(base_url, good \\ "good.bin") do
     with {:ok, bin} <- fetch(base_url <> good),
          :ok <- File.write(@scratch, bin) do
       PL.reload_and_verify(@scratch)

@@ -51,7 +51,7 @@ defmodule Nervezynq.EyeScan do
 
   @tap_dir "/root/idelay"
   # /lib/firmware is in the read-only rootfs (:erofs). `PL.reload/1` hands the
-  # path straight to `devcfg_load`, which will read from anywhere, so the
+  # path straight to `oxibit port`, which will read from anywhere, so the
   # writable /root mount is the right place to stage.
   @staged "/root/eyescan.bin"
 

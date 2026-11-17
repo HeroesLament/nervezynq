@@ -22,10 +22,10 @@ defmodule Nervezynq.MixProject do
     ]
   end
 
-  # elixir_make drives the Makefile that cross-compiles native/fabric. That crate
-  # is Linux/Zynq-only (mmap64, MAP_POPULATE, /dev/mem), so it cannot build on a
-  # macOS host -- running it for MIX_TARGET=host breaks the whole host compile,
-  # including `mix test` and host-only Mix tasks. Targets still build it.
+  # elixir_make drives the Makefile that builds oxibit (../../oxibit) into
+  # priv/. Its device side is Linux/Zynq-only, and the host build has no use
+  # for it (no Fabric runs on the host), so MIX_TARGET=host skips the step and
+  # `mix test` and host-only Mix tasks do not need the oxibit checkout.
   defp compilers(:host), do: Mix.compilers()
   defp compilers(_target), do: [:elixir_make] ++ Mix.compilers()
 

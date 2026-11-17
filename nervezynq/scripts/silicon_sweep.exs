@@ -75,11 +75,14 @@ defmodule SiliconSweep.Devcfg do
   @moduledoc """
   The Zynq-7000 Device Configuration Interface at `0xF800_7000` (UG585 ch. 6).
 
-  Mapped exactly the way `Nervezynq.SLCR` maps the SLCR block: a second
-  `fabric_port` instance with a different base in argv. No Rust changes -- the
-  port already takes `<base> <len>`, and `mmap` is not subject to the
-  `valid_phys_addr_range()` check that makes `:file.pread` on /dev/mem fail with
-  `:efault` for non-RAM physical addresses.
+  Mapped exactly the way `Nervezynq.SLCR` maps the SLCR block: an `oxibit mem`
+  instance over its base (`Nervezynq.PortWire.open/2`). `mmap` is not subject
+  to the `valid_phys_addr_range()` check that makes `:file.pread` on /dev/mem
+  fail with `:efault` for non-RAM physical addresses.
+
+  Loading is `Nervezynq.PL`'s job (oxibit port). Driving DevC from here while a
+  load runs is a race with the same DMA engine; do readback only between
+  loads.
 
   ## Why the PS and not the ICAP
 
@@ -185,8 +188,8 @@ defmodule SiliconSweep.Devcfg do
 
   def unlock, do: write32(@unlock, @unlock_magic)
 
-  # STATUS bits, from native/fabric/src/devcfg.rs which already had to learn
-  # this the hard way for the load path.
+  # STATUS bits, as in oxibit's crates/oxibit-zynq7/src/regs.rs (the load
+  # path), from the mainline zynq-fpga driver.
   @status_dma_q_f 1 <<< 31
   @status_dma_q_e 1 <<< 30
 
@@ -382,9 +385,9 @@ defmodule SiliconSweep.DmaBuf do
   1 GB -- enough for the whole xc7z020 configuration memory in one transfer, not
   just one tile.
 
-  Mapped with a third `fabric_port` instance. The port already takes
-  `<base> <len>` in argv, so this needs no Rust: it is the same trick
-  `Nervezynq.SLCR` uses for the SLCR block.
+  Mapped with an `oxibit mem` instance, as `Nervezynq.SLCR` maps the SLCR
+  block. oxibit also stages bitstreams for loading in this same reservation,
+  so a load overwrites whatever a readback left here.
 
   ## The one invariant
 
@@ -1285,11 +1288,11 @@ defmodule SiliconSweep do
   """
   def probe do
     checks = [
-      {:fabric_port_binary, fn -> File.exists?(Application.app_dir(:nervezynq, "priv/fabric_port")) end},
+      {:oxibit_binary, fn -> File.exists?(Application.app_dir(:nervezynq, "priv/oxibit")) end},
       {:slcr_mapped, fn -> match?({:ok, _}, Nervezynq.SLCR.read32(0x170)) end},
       {:devcfg_mapped, fn -> match?({:ok, _}, Devcfg.read32(0x00)) end},
       {:devcfg_wire_protocol, fn -> match?({:ok, _}, Devcfg.read32(0x14)) end},
-      {:pl_configured, fn -> match?({:ok, _}, Nervezynq.Fabric.info()) end},
+      {:pl_configured, fn -> Nervezynq.Fabric.ready?() end},
       {:dma_buffer, &dma_buffer_available?/0},
       {:mask_db_present, fn -> File.exists?("/root/mask_cmt_top_l_lower_b.db") end},
       {:base_frames_present, fn -> File.exists?("/root/base.frames") end}
@@ -1334,7 +1337,7 @@ defmodule SiliconSweep do
   increasing order of intrusiveness:
 
     1. Reserve a range at boot (`mem=` on the kernel cmdline, or a
-       `reserved-memory` node) and map it with a third fabric_port instance.
+       `reserved-memory` node) and map it with an `oxibit mem` instance.
        No Rust, one firmware rebuild.
     2. A CMA allocation exposed through a small NIF addition.
 

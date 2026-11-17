@@ -1,6 +1,6 @@
 # NzScope — waterfall GUI for the Nervezynq SDR
 
-wx_mvu desktop app: live FFT spectrum + scrolling waterfall for the
+cedar desktop app: live FFT spectrum + scrolling waterfall for the
 LibreSDR running the V1 snapshot driver (`Nervezynq.SDR`, `sdr.exs`).
 
 ```
@@ -37,7 +37,7 @@ Nervezynq.WFTap ──{packet,4} TCP:7355────────┘   └──
   `stream_rx/2` raises row rates 100×, replace this module with a NIF —
   minutemodem's `ui_dsp` is the template.
 * Hot data never touches the MVU scene: `Link` sends bins straight to
-  the canvases (`WxMVU.GLCanvas.send_data/2`), the scene hears meta at
+  the canvases (`Cedar.GLCanvas.send_data/2`), the scene hears meta at
   human rate.
 * `NzScope.Canvas.Waterfall` is minutemodem's proven `Spectrogram`
   adapted for complex spectra (full-width rows, runtime dB range,
@@ -63,8 +63,9 @@ mix deps.get
 iex -S mix
 ```
 
-Enter the board IP (usb0 `172.31.248.125`, or whatever `.board-ip`
-says), Connect. Tune/gain/pause round-trip through the tap into
+Enter the board IP (its `usb0` address, per board: see the table in
+`nervezynq/AGENTS.md`, "Reaching the board"; or whatever `.board-ip` says),
+Connect. Tune/gain/pause round-trip through the tap into
 `Nervezynq.SDR.set_frequency/1` etc.
 
 ## Running without the board

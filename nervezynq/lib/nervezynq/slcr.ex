@@ -5,19 +5,20 @@ defmodule Nervezynq.SLCR do
   Exists to program `FCLK1` to 200 MHz so `IDELAYCTRL` has a reference clock,
   after every CMT in the PL failed to lock under openXC7 (2 primitives, 2 site
   types, 2 clock routes, 9 multipliers, ~15 bitstreams, 0 locks). The PS's PLLs
-  are not openXC7's problem -- they are configured by the FSBL and demonstrably
-  work, since `FCLK0` is what clocks the whole fabric.
+  are not openXC7's problem -- they are configured by `ps7_init` in the U-Boot
+  SPL (`BOOT.BIN`) and demonstrably work, since `FCLK0` is what clocks the whole
+  fabric.
 
   ## Why this is a port and not a file read
 
   `:file.pread` on `/dev/mem` at `0xF800_0170` returns `{:error, :efault}`.
   That is not permissions -- `CONFIG_STRICT_DEVMEM` answers `:eacces`. ARM's
   `valid_phys_addr_range()` limits the read/write path to physical RAM, and
-  SLCR is not RAM. `mmap` carries no such check, which is exactly the reasoning
-  already written up in `native/fabric/src/lib.rs` for the PL aperture.
+  SLCR is not RAM. `mmap` carries no such check.
 
-  So this reuses `fabric_port` unchanged: it already takes `<base> <len>` as
-  argv, so a second instance mapping `0xF800_0000` needs no Rust at all.
+  So this maps the block through `Nervezynq.PortWire.open/2`, i.e. an
+  `oxibit mem` instance over `0xF800_0000`, the same port every PS-side
+  mapping in this project uses.
 
   ## What is deliberately NOT inherited from `Nervezynq.Fabric`
 
@@ -234,15 +235,7 @@ defmodule Nervezynq.SLCR do
 
   @impl true
   def init(_opts) do
-    executable = Path.join(:code.priv_dir(:nervezynq), "fabric_port")
-
-    port =
-      Port.open({:spawn_executable, executable}, [
-        {:args, ["0x" <> Integer.to_string(@base, 16), Integer.to_string(@len)]},
-        {:packet, 4},
-        :binary,
-        :exit_status
-      ])
+    {:ok, port} = Nervezynq.PortWire.open(@base, @len)
 
     Logger.info("SLCR: mapped 0x#{Integer.to_string(@base, 16)}+#{@len}")
     {:ok, %{port: port}}

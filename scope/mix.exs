@@ -22,7 +22,7 @@ defmodule NzScope.MixProject do
     [
       # Path dep, not hex: the GLCanvas surface this app leans on is the one
       # in the working tree next door.
-      {:wx_mvu, path: "../../wx_mvu"}
+      {:cedar, path: "../../cedar"}
     ]
   end
 end

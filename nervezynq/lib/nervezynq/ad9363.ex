@@ -633,7 +633,14 @@ defmodule Nervezynq.AD9363 do
     # spread of 0.41 to 0.51 that looked like a termination problem and was
     # actually a timing one.
     rx_delay = Keyword.get(opts, :rx_clk_data_delay, 0x0A)
-    tx_delay = Keyword.get(opts, :tx_clk_data_delay, 0x00)
+    # FB_CLK_DELAY=0, TX_DATA_DELAY=8. Measured 2026-09-26 on dr-a through
+    # the chip's data-port loopback (scripts/tx_loop.exs, TxLoop.eye/2): a
+    # diagonal plateau of 105/256 cells with every field of every frame
+    # correct, bounded below by data_delay - fb_clk_delay >= 2; 0x08 sits six
+    # steps inside that edge and passed 5 x 1000 frames. 0x00 (the old
+    # default) is outside the eye: with ODDR launching data and FB_CLK on
+    # the same edge, one edge polarity's words arrived corrupted.
+    tx_delay = Keyword.get(opts, :tx_clk_data_delay, 0x08)
     # LVDS_BIAS(1) is 150 mV: ADI computes the field as (mV - 75) / 75.
     bias = Keyword.get(opts, :lvds_bias_ctrl, @rx_on_chip_term ||| 0x01)
 

@@ -2,24 +2,61 @@
 
 Nerves firmware for the LibreSDR (Zynq-7020, `xc7z020clg400-1`). Owns the whole
 stack: GPL boot chain, BEAM userspace, a Rust port into the PL, and SPI control
-of the AD9363 transceiver. No vendor blobs anywhere — the only closed thing in
-the loop is the on-die BootROM.
+of the AD9363 transceiver. No vendor blobs anywhere; the only closed thing in
+the loop is the on-die BootROM. The boot chain (SPL + `ps7_init`, U-Boot) is
+built from source by Buildroot; see `../nerves_system_libresdr/docs/boot-chain.md`.
 
 ## Reaching the board
 
-**usb0 at `172.31.248.125`** — static, reliable, and currently the only path.
-eth0 has been down for a while; when it worked it took a fresh DHCP lease on
-every reboot, so `dns-sd -t 6 -G v4 nerves-0000.local` was how you found it.
+Over the USB gadget (usb0). Each card is burned with `NERVES_SERIAL_NUMBER`;
+`usb-gadget-init` hashes the serial into the gadget MAC and VintageNetDirect
+derives a /30 from it, so every board has its own fixed subnet (see
+`docs/RF_FIRST_LIGHT.md`, "Board identity changes").
+
+| Serial | Hostname | Board (usb0) | Mac side |
+|---|---|---|---|
+| `lsdr-a` | `nerves-dr-a` | `172.31.104.113` | `172.31.104.114` |
+| `lsdr-b` | `nerves-dr-b` | `172.31.29.213` | `172.31.29.214` |
+| `lsdr-c` | `nerves-dr-c` | `172.31.194.197` | `172.31.194.198` |
 
 ```sh
-ssh 172.31.248.125            # drops straight into IEx
+ssh 172.31.194.197            # drops straight into IEx
 ```
+
+The old single-board address `172.31.248.125` no longer applies.
+
+After a hub replug the Mac sometimes leaves a board's ECM interface inactive or
+drops it entirely while the board itself has booted fine (seen on dr-a and dr-c
+2026-09-28). Replugging that one board's OTG cable fixes it. Check the debug
+UART before assuming the board is hung.
 
 ## Build and deploy
 
 ```sh
 MIX_TARGET=libresdr mix firmware
-MIX_TARGET=libresdr ./upload.sh 172.31.248.125
+MIX_TARGET=libresdr ./upload.sh <board-ip>
+```
+
+The Nerves system (`../nerves_system_libresdr`, `nerves: [compile: true]`) is
+built from source by Buildroot through Nerves' `container` build runner (Apple's
+`container` CLI, not Docker or colima). Edits under the system's
+`package_files` list change the artifact checksum and trigger an incremental
+system build in the persistent `nerves_system_libresdr-<id>` container volume
+(`container volume list`), usually one to three minutes.
+
+Buildroot does not rebuild a package when files outside it change. Handled:
+`dts/` (see below). Not handled: `uboot/patches/`, the U-Boot defconfig and
+`linux/` fragments; remove that package's build directory in the volume first.
+`../nerves_system_libresdr/docs/boot-chain.md`, "Stale-build traps", has the
+commands.
+
+Device-tree edits: `post-createfs.sh` compiles `zynq-libresdr.dtb` from
+`dts/` on every system build (Buildroot's own DT build does not notice `dts/`
+changes). Still verify a DT change in the built image rather than assuming:
+
+```sh
+unzip -o -q _build/libresdr_dev/nerves/images/nervezynq.fw -d /tmp/fwchk
+grep -c -a <property> /tmp/fwchk/data/zynq-libresdr.dtb
 ```
 
 `upload.sh` needs `MIX_TARGET` in the environment or it prints a confusing
@@ -31,27 +68,71 @@ A/B failover is armed: `fwup.conf` sets `upgrade_available=1` and
 reverts after bootlimit. The validator deliberately does **not** wait for
 network — a down link would revert good firmware.
 
-### Deploying a bitstream (separate from firmware)
+### Loading a bitstream
 
-The PL bitstream lives on the FAT boot partition and is loaded by u-boot
-(`fpga loadb`) before Linux starts. Linux's `fpga_manager` only reports state.
+Bitstreams are loaded at runtime from Linux, never by U-Boot. **Never leave a
+`.bit` on the FAT boot partition**: U-Boot programs it before Linux and a
+transfer that never completes hangs the boot with no console
+(`docs/journal/HANDOFF.md`, "SOLVED: the board did not boot because U-Boot was
+programming the PL at boot").
 
-```sh
-scp top.bit 172.31.248.125:/root/libresdr.bit
-```
+After every boot the PL is blank, but the U-Boot SPL's `ps7_post_config` has
+already enabled the PS/PL level shifters and released the fabric resets, so GP0
+is live and any access would hang the CPU. Loading and PL access both go
+through **oxibit** (`~/src/oxibit`, built into `priv/oxibit` by the Makefile):
+
 ```elixir
-cmd("mount -o remount,rw /mnt/boot && cp /root/libresdr.bit /mnt/boot/ && \
-     ls -l /mnt/boot/libresdr.bit; mount -o remount,ro /mnt/boot")
-Nerves.Runtime.reboot()
+Nervezynq.PL.reload("/data/hp_dma_s1.bin")        # or Nervezynq.Fabric.load/2
+Nervezynq.Fabric.status()                         # ready?, boundary, FCLKs, loaded config hash
+Nervezynq.PL.reload("/data/hp_loop_s0.bin", aperture: false)   # design with no GP0 slave
 ```
 
-There is no `sync` in this busybox. A reboot is required — the bitstream is only
-read at boot.
+`Nervezynq.Fabric` owns the one `oxibit port` process, which holds oxibit's
+lock and refuses every aperture access unless hardware reads configured
+(DevC STATUS `PSS_FST_CFG_B` and `PSS_GTS_CFG_B`) with the boundary open. The
+file is checked (structure, CRC, IDCODE) before the PL is erased; a load that
+fails after the erase leaves the PL blank and access refused. Details and the
+measurements behind them: oxibit `docs/zynq7.md`.
+
+Because the port holds the lock, the `oxibit` CLI on the board can run
+`status` (and `inspect`/`verify`) alongside the app, but its `load`, `clear`,
+`peek` and `poke` report "held by pid N". Use the Elixir API.
+
+The radio bring-up is still `LsdrBringup.run/2`
+(`designs/libresdr_radio/taps/serve/lsdr_bringup.exs` in ehdl), which loads
+`hp_dma_s1.bin` through `Nervezynq.PL`.
+
+oxibit stages bitstreams in the `pcap-readback` reservation (`0x3FC00000`,
+4 MiB), which also holds the HP rings (`0x3FD00000`, `0x3FF00000`), the
+readback buffer and `ocu_ingest`'s region. A load erases the PL first, so no
+design is DMA-ing there during staging, and overwrites whatever was there.
+
+### Watchdog
+
+The SWDT (`cdns-wdt` at `0xF8005000`) is petted by nerves_heart (WDT timeout
+10 s, VM timeout 30 s). The DT must carry `reset-on-timeout;` on `&watchdog0`:
+without it the driver leaves `ZMR.RSTEN` clear, the timeout only raises an
+interrupt (`Watchdog timed out. Internal reset not enabled`), and a CPU stalled
+on an unanswered GP0/HP read stays hung until a power cycle. With it, `ZMR`
+reads `0x33` and a hung bus read recovers by SWDT reset in about 37 s (10/10 on
+dr-c, 2026-09-28). A system reset clears the PL configuration, so the bring-up
+rule above applies after every watchdog reset too.
+
+Quick check on a board:
+
+```elixir
+{:ok, p} = Nervezynq.PortWire.open(0xF8005000, 0x1000)
+Nervezynq.PortWire.transact(p, {:read32, 0})   # expect {:ok, 0x33}
+:heart.set_cmd(~c"disable_hw")                  # board should reset within ~10 s
+```
 
 ## `Nervezynq.Fabric`
 
-GenServer over `native/fabric`, a Rust port that mmaps the PL aperture and
-speaks `{:packet, 4}` on stdio.
+GenServer over `oxibit port`, a Rust port that owns loading and the PL
+aperture and speaks `{:packet, 4}` on stdio (`Nervezynq.PortWire`). Every
+other physical mapping (SLCR, DevC, DDR rings, PS GPIO) goes through
+`PortWire.open/2`, i.e. `oxibit mem`, which refuses any range inside
+M_AXI_GP0/GP1, so nothing but this port can reach the PL.
 
 **Why a port, not a NIF.** `/dev/mem` cannot be read with `pread` here: ARM's
 `valid_phys_addr_range()` restricts read/write to physical RAM, so a `pread` at
@@ -60,15 +141,20 @@ is unavoidable. In a NIF an AXI access that decodes-but-errors arrives as
 `SIGBUS` on a scheduler thread and takes the VM with it — no supervisor, no ssh,
 no OTA, a field device that needs visiting. As a port it is one OS process.
 
-The port protects against **faults, not hangs**: a read into unconfigured PL
-hangs the CPU regardless of who issued it. Hence the `fpga0/state` guard on
-every call, cached once it reads `operating`. **If anything ever gains the
-ability to reload a bitstream at runtime, that cache must be invalidated.**
+A process boundary protects against **faults, not hangs**: a read into
+unconfigured PL hangs the CPU regardless of who issued it. The guard is
+therefore in the port and reads hardware before every access op; a refusal is
+`{:error, {:pl_not_ready, why}}`. `Fabric.invalidate/0` and `authorise/0` are
+deprecated no-ops kept so old scripts still run. INT_STS `PCFG_DONE` is **not**
+a configured signal: it is a latched flag that the PROG_B pulse itself sets,
+and gating on it hung dr-c once (oxibit `docs/zynq7.md`).
 
-Cross-compile: `native/fabric` builds via `elixir_make`. The target triple is
-`armv7-unknown-linux-gnueabihf` (ARMv7-A hardfloat + NEON — **not** the `arm-`
+Cross-compile: the Makefile builds oxibit from `OXIBIT_DIR` (default
+`../../oxibit`, i.e. `~/src/oxibit`) via `elixir_make`. The target triple is
+`armv7-unknown-linux-gnueabihf` (ARMv7-A hardfloat + NEON, **not** the `arm-`
 triple, which is ARMv6). `$CROSSCOMPILE` supplies the linker prefix. Needs
-`rustup target add armv7-unknown-linux-gnueabihf` once.
+`rustup target add armv7-unknown-linux-gnueabihf` once. The Makefile also
+deletes the retired `fabric_port` and `devcfg_load` from `priv/` on every build.
 
 ### Register map (matches `Hw.AXI4Lite.Slave`)
 
@@ -97,7 +183,7 @@ userspace a dead one looks exactly like a broken bus.
 SPI control composed in Elixir on the fabric's byte pipe. The fabric moves one
 byte with a chip-select hold bit and knows nothing about the command grammar —
 that is deliberate, so a framing mistake costs a module reload rather than a
-synthesis, place, route, bitstream and reboot cycle.
+synthesis, place, route and bitstream reload.
 
 ```elixir
 AD9363.bring_up()
@@ -164,16 +250,20 @@ not destructive, so trying beats reasoning from the schematic.
 - `RX_D1_N` is **V18** by inference, not by direct schematic read. pdftotext
   lost that net name and `W17` (the obvious guess) does not exist on clg400.
   Worth an eyeball before trusting samples from that lane.
+- A card with firmware older than the `dr_mode = "peripheral"` DT change (e.g.
+  `6fb5359d`) has `usb0` in OTG mode and can come up as a USB **host**
+  (`ci_hdrc ci_hdrc.0: EHCI Host Controller` in dmesg, UDC `not attached`). It
+  boots, but has no USB network, no cable or port swap helps, and it cannot be
+  reached for an OTA. Update it with the card-reader path in
+  `../nerves_system_libresdr/docs/boot-chain.md` (dr-b, 2026-09-28). All three
+  boards are past this.
 
 ## Known-unfixed
 
-- **Nerves artifact checksums do not cover DTS edits.** Editing
-  `nerves_system_libresdr/dts/xilinx/zynq-libresdr.dts` does not invalidate the
-  cached artifact, so `mix firmware` silently ships an old DTB. Worked around
-  once by patching the DTB inside `~/.nerves/artifacts/...`.
-- u-boot `lib/initcall.c` still carries bring-up instrumentation writing to DDR
-  `0x0F000000`. Remove or `CONFIG_`-guard before publishing.
-- u-boot `board/xilinx/zynq/board.c` has a local fix returning `ENVL_MMC` when
-  `CONFIG_ENV_IS_IN_MMC` is set. Upstreamable — raw-MMC env is currently
-  unreachable on any Zynq booting from SD.
+- `zynq: allow a raw MMC environment when booting from SD`
+  (`uboot/patches/0003`) is upstreamable and not yet sent.
 - Ethernet negotiates 100 Mbps on a gigabit RTL8211E. Never investigated.
+- `rootfs_overlay/etc/erlinit.config` sets `-c ttyGS0` (the USB ACM gadget),
+  which does not exist yet when erlinit starts: boot logs `error setting
+  controlling terminal: /dev/ttyGS0`. IEx is reachable over ssh and on the
+  debug UART regardless. Pick one console and make the config say so.

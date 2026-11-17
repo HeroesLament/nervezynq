@@ -13,10 +13,10 @@ defmodule NzScope.Canvas.Spectrum do
 
   ## Data
 
-      WxMVU.GLCanvas.send_data(:spectrum, {:bins, binary})
-      WxMVU.GLCanvas.send_data(:spectrum, {:set_range, -100.0, 0.0})
-      WxMVU.GLCanvas.send_data(:spectrum, {:set_freq, lo_hz, fs_hz})
-      WxMVU.GLCanvas.send_data(:spectrum, :clear)
+      Cedar.GLCanvas.send_data(:spectrum, {:bins, binary})
+      Cedar.GLCanvas.send_data(:spectrum, {:set_range, -100.0, 0.0})
+      Cedar.GLCanvas.send_data(:spectrum, {:set_freq, lo_hz, fs_hz})
+      Cedar.GLCanvas.send_data(:spectrum, :clear)
 
   `set_freq` drives the frequency gridlines: vertical ticks on nice
   ABSOLUTE frequencies (NzScope.Ticks — the rule lives there), minors dim,
@@ -32,8 +32,8 @@ defmodule NzScope.Canvas.Spectrum do
       ]
   """
 
-  use WxMVU.GLCanvas
-  alias WxMVU.Renderer.GL
+  use Cedar.GLCanvas
+  alias Cedar.Renderer.GL
   require Logger
 
   @default_fft_size 1024

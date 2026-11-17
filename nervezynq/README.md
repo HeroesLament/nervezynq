@@ -1,32 +1,26 @@
-# Nervezynq
+# nervezynq
 
-**TODO: Add description**
+The Nerves application for the LibreSDR (Zynq-7020 + AD9363): AD9363 bring-up
+over SPI, the `Nervezynq.Fabric` Rust port into the PL, bitstream loading,
+capture and the SDR driver facade.
 
-## Targets
+The only target is `libresdr`, the system in `../nerves_system_libresdr`
+(built from source; see its `README.md`).
 
-Nerves applications produce images for hardware targets based on the
-`MIX_TARGET` environment variable. If `MIX_TARGET` is unset, `mix` builds an
-image that runs on the host (e.g., your laptop). This is useful for executing
-logic tests, running utilities, and debugging. Other targets are represented by
-a short name like `rpi5` that maps to a Nerves system image for that platform.
-All of this logic is in the generated `mix.exs` and may be customized. For more
-information about targets see:
+```sh
+export MIX_TARGET=libresdr
+mix deps.get
+mix firmware                    # builds the system too, if its inputs changed
+./upload.sh <board-ip>          # OTA to a running board; it reboots (~90 s)
+```
 
-https://nerves.hexdocs.pm/supported-targets.html
+A fresh card is written with fwup's `complete` task and a per-board serial:
 
-## Getting Started
+```sh
+sudo NERVES_SERIAL_NUMBER=lsdr-x fwup -a -i _build/libresdr_dev/nerves/images/nervezynq.fw \
+    -t complete -d /dev/rdiskN
+```
 
-To start your Nerves app:
-  * `export MIX_TARGET=my_target` or prefix every command with
-    `MIX_TARGET=my_target`. For example, `MIX_TARGET=rpi5`
-  * Install dependencies with `mix deps.get`
-  * Create firmware with `mix firmware`
-  * Burn to an SD card with `mix burn`
-
-## Learn more
-
-  * Official docs: https://nerves.hexdocs.pm/getting-started.html
-  * Official website: https://nerves-project.org/
-  * Forum: https://elixirforum.com/c/nerves-forum
-  * Elixir Discord #nerves channel: https://discord.gg/elixir
-  * Source: https://github.com/nerves-project/nerves
+Read `AGENTS.md` before working on the code: board addresses, the bitstream
+loading rules (a fabric access before a completed load hangs the CPU), the
+watchdog, the Fabric port, and the AD9363 SPI framing.

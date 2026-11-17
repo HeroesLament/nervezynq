@@ -62,16 +62,49 @@ echo 0x0001 > idProduct
 echo 0x0200 > bcdUSB
 echo 0x0100 > bcdDevice
 
+# Per-board identity. Two boards on one host with the same MACs collide: the
+# host brings up ONE ECM interface and the other board has no path (seen
+# 2026-09-23 with lsdr-a/lsdr-b). Derive the MAC tail and the USB serial
+# from boardid, which reads nerves_serial_number from the U-Boot env
+# (provisioned at burn: NERVES_SERIAL_NUMBER=... fwup ...).
+#
+# Hash is djb2 over the serial's bytes, masked to 24 bits, using only shell
+# builtins (this busybox lacks head/sort/seq; md5sum is not assumed).
+# printf '%d' "'c" is POSIX for "code point of c". 16 bits of it go into
+# the MAC: 02:1a:35:HH:LL:22 (device) / :23 (host). Locally administered,
+# unicast. With no serial the old fixed MACs are kept, so a single
+# unprovisioned board behaves exactly as before.
+SERIAL=$(boardid 2>/dev/null)
+if [ -n "$SERIAL" ]; then
+    h=5381
+    s=$SERIAL
+    while [ -n "$s" ]; do
+        rest=${s#?}
+        c=${s%"$rest"}
+        h=$(( (h * 33 + $(printf '%d' "'$c")) & 0xFFFFFF ))
+        s=$rest
+    done
+    MAC_MID=$(printf '%02x:%02x' $(( (h >> 8) & 0xFF )) $(( h & 0xFF )))
+    USB_SERIAL=$SERIAL
+else
+    MAC_MID="00:01"
+    USB_SERIAL="0000000000000000"
+fi
+DEV_MAC="02:1a:35:$MAC_MID:22"
+HOST_MAC="02:1a:35:$MAC_MID:23"
+log "serial '$SERIAL' -> dev $DEV_MAC host $HOST_MAC"
+
 mkdir -p strings/0x409
 echo "Nerves"           > strings/0x409/manufacturer
 echo "LibreSDR Console" > strings/0x409/product
-echo "0000000000000000" > strings/0x409/serialnumber
+echo "$USB_SERIAL"      > strings/0x409/serialnumber
 
 # ecm = network (usb0 -> VintageNetDirect -> ssh over USB). acm = serial.
-# Fixed MACs so the host does not see a brand new interface every boot.
+# MACs are stable per board (see above) so the host does not see a brand new
+# interface every boot.
 mkdir -p functions/ecm.usb0
-echo "02:1a:35:00:01:22" > functions/ecm.usb0/dev_addr
-echo "02:1a:35:00:01:23" > functions/ecm.usb0/host_addr
+echo "$DEV_MAC"  > functions/ecm.usb0/dev_addr
+echo "$HOST_MAC" > functions/ecm.usb0/host_addr
 mkdir -p functions/acm.usb0
 
 mkdir -p configs/c.1/strings/0x409

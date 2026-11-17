@@ -11,7 +11,7 @@ defmodule Nervezynq.Regs do
   `Regs.pulse_cap_arm/0`.
   """
   use Nervezynq.RegMap,
-    spec: "../../../../ehdl/designs/libresdr_radio/regmap.exs",
+    spec: "../../../../ehdlslop/designs/libresdr_radio/regmap.exs",
     ctrl_base: 0x0C,
     status_base: 0x1C
 end
