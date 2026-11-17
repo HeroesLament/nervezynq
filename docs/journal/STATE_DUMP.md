@@ -1,5 +1,10 @@
 # STATE DUMP — end of the readback-instrument session
 
+> Raw session log: records what was believed at the time. Where it disagrees
+> with `nerves_system_libresdr/README.md`, its `docs/`, or `nervezynq/AGENTS.md`,
+> those win.
+
+
 Everything below is measured or implemented, not planned. Planned work is at
 the bottom, clearly separated.
 

@@ -6,9 +6,10 @@ Xilinx Zynq-7020 (`xc7z020clg400-1`) with an Analog Devices AD9363 transceiver.
 The point of this project is that the whole stack is open. Elixir/BEAM
 userspace controls the radio; a Rust port maps the programmable-logic (PL)
 aperture; the PL bitstream is built with the open FPGA toolchain
-(openXC7 / nextpnr / Project X-Ray), not vendor tools; the boot chain is
-GPL u-boot. The only closed component anywhere in the loop is the on-die
-Zynq BootROM.
+(openXC7 / nextpnr / Project X-Ray), not vendor tools; the boot chain (U-Boot
+SPL with the board's `ps7_init`, then U-Boot) and the kernel are built from
+source by Buildroot. The only closed component anywhere in the loop is the
+on-die Zynq BootROM.
 
 > Status: **research, in progress, and up on silicon.** The receive path works
 > — tune, gain, and snapshot IQ capture are proven on a real board, decoding
@@ -22,8 +23,8 @@ Zynq BootROM.
 
 | Path | What it is |
 |------|------------|
-| `nervezynq/` | The Nerves application: AD9363 SPI bring-up, LVDS capture, the 2R2T MIMO decode, the `Nervezynq.Fabric` Rust port (`native/fabric/`), and the `Nervezynq.SDR` driver facade (`scripts/sdr.exs`). |
-| `nerves_system_libresdr/` | The custom Nerves system for this board (Buildroot config, kernel, DTS, fwup). Vendored here so the firmware builds; retains its own upstream licenses under `LICENSES/`. |
+| `nervezynq/` | The Nerves application: AD9363 SPI bring-up, LVDS capture, the 2R2T MIMO decode, `Nervezynq.Fabric` over oxibit (`~/src/oxibit`, guarded PL loading and access), and the `Nervezynq.SDR` driver facade (`scripts/sdr.exs`). |
+| `nerves_system_libresdr/` | The custom Nerves system for this board: Buildroot config, U-Boot/SPL patches, kernel config, device tree, fwup. Start with its `README.md`. Retains its own upstream licenses under `LICENSES/`. |
 | `scope/` | `NzScope` — a wxWidgets/OpenGL waterfall + spectrum GUI (via [wx_mvu](https://github.com/HeroesLament/wx_mvu)) that visualizes the SDR's live FFT over a small TCP tap. |
 | `patches-nextpnr/` | Fixes to nextpnr-xilinx's MMCM/PLL handling needed to build this design. |
 | `openocd/` | OpenOCD config for JTAG bring-up of the board. |
@@ -65,14 +66,33 @@ mix firmware
 ./upload.sh <board-ip>        # OTA; the device reboots itself (~90 s)
 ```
 
-The PL bitstream is loaded by u-boot before Linux and lives on the FAT boot
-partition; deploying a new bitstream is separate from firmware (see
-`nervezynq/AGENTS.md`).
+The Nerves system, boot chain included, builds from source with Buildroot
+through Nerves' `container` build runner (Apple's `container` CLI on macOS);
+see `nerves_system_libresdr/README.md`. Fresh cards are burned with a per-board
+serial (`NERVES_SERIAL_NUMBER=lsdr-x fwup ... -t complete`), which sets the
+hostname and the board's `usb0` address.
+
+PL bitstreams are loaded at runtime from Linux, never by U-Boot from the boot
+partition, and the first load after every boot must be the documented bring-up.
+See `nervezynq/AGENTS.md` ("Loading a bitstream", "Watchdog").
 
 Running the desktop waterfall GUI against a live board is covered in
 `scope/README.md`.
 
 ## Documentation
+
+Board support (kernel, boot chain, Nerves system):
+
+- `nerves_system_libresdr/README.md`: hardware, software versions, boot flow,
+  SD layout, A/B updates, provisioning, building and deploying.
+- `nerves_system_libresdr/docs/boot-chain.md`: the U-Boot/SPL build, its
+  provenance and verification, deployment and recovery.
+- `nerves_system_libresdr/docs/kernel.md`: kernel config and device tree, node
+  by node, and how to change them safely.
+- `nervezynq/AGENTS.md`: reaching the boards, loading bitstreams, the watchdog,
+  the Fabric port, AD9363 bring-up, board facts.
+
+Radio and fabric:
 
 - `docs/SDR_V1.md` — the V1 receive driver: the API, what's measured, what's
   deliberately not there yet.

@@ -103,6 +103,11 @@ defaults).
 2. **Find what sets THR_CNT=1.** Diff the boot chain against the pre-dry
    image's (FSBL/ps7_init/U-Boot). Knowing the writer says whether other
    SLCR state is also wrong.
+   *Update 2026-09-28:* `ps7_init` is now source
+   (`nerves_system_libresdr/uboot/patches/0002`, identical to the tables the
+   2026-07-28 SPL ran). It writes only `FPGA0_CLK_CTRL` / `FPGA1_CLK_CTRL`
+   (`0xF8000170`, `0xF8000180`) and never a `FPGA*_THR_CNT` register
+   (`0xF8000178`, `0xF8000188`, ...), so the writer is not `ps7_init`.
 3. **Re-run the radio bring-up on current firmware.** GP0 works now: SPI,
    AD9363 init, capture buffer — the whole RX chain is unblocked without
    any firmware rebuild.

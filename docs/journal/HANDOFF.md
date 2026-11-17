@@ -1,5 +1,13 @@
 # Handoff — LibreSDR / EHDL / HaLow
 
+> **Raw lab log, oldest first.** Entries record what was believed at the time
+> and are not edited afterwards. Where they disagree with the current docs,
+> the docs win: `nerves_system_libresdr/README.md`, its `docs/boot-chain.md` and
+> `docs/kernel.md`, and `nervezynq/AGENTS.md`. In particular, U-Boot no longer
+> loads a bitstream at boot, the system is built from source (not a prebuilt
+> artifact), and the boot chain is built by Buildroot (2026-09-28).
+
+
 Written at the end of a long session, for whoever picks this up next.
 The per-repo `AGENTS.md` files carry the durable facts; this is the *state* and
 the *judgement calls*.
@@ -7117,3 +7125,104 @@ a poke can therefore be attributed to the poked bits.
 Cite XAPP888 for the lock/filter table words rather than claiming independent
 derivation -- silicon only ever shows one row at a time, and the provenance
 matters.
+
+## SOLVED 2026-09-28: the hardware watchdog could never reset the board
+
+### Symptom
+
+During multi-board observatory campaigns boards went dark mid-run: no ping, no
+ssh. Some came back on their own minutes later, one (dr-c, 06:19) stopped in
+U-Boot mid-banner and needed a power cycle, and after hub replugs two boards
+looked hung but had actually booted (the Mac left their ECM links down).
+
+### Diagnosis, on dr-c with the debug UART attached
+
+1. Plain `Nerves.Runtime.reboot()`: back in ~45 s. Warm reset is fine.
+2. `:heart.set_cmd(~c"disable_hw")`: nerves_heart stops petting, and the kernel
+   logs `cdns-wdt f8005000.watchdog: Watchdog timed out. Internal reset not
+   enabled`. The board keeps running. The SWDT was never able to reset it.
+3. `ZMR` (`0xF8005000`) read `0x35`: WDEN and IRQEN set, **RSTEN clear**. The
+   DT enabled `&watchdog0` without `reset-on-timeout;`, so `cdns_wdt` programs
+   interrupt-only mode.
+4. Setting RSTEN by hand (`ZMR <- 0x00ABC037`) and restarting the counter
+   (`RESTART <- 0x1999`): SWDT reset, clean boot through U-Boot to `iex`.
+5. Deliberate hang with RSTEN set: `Fabric.read32(0x24)` into blank fabric never
+   returned, the SWDT reset the board, clean boot. Soak: 10/10 cycles, back in
+   36-37 s each.
+
+So a CPU stalled on an unanswered GP0 read had no hardware recovery at all.
+The self-recoveries seen earlier came from some other reset path (not
+identified; likely a software reboot while the bus was stuck), and the U-Boot
+hang at 06:19 followed one of those, not an SWDT reset.
+
+Also observed: after the SWDT reset the PL was blank (the GP0 read hung), while
+SLCR `LVL_SHFTR_EN = 0xF` and `FPGA_RST_CTRL = 0`. A system reset clears the PL
+configuration but the FSBL re-opens the PS/PL path, so the first fabric access
+after any reset hangs unless a bitstream is loaded first.
+
+### The fix
+
+`nerves_system_libresdr/dts/xilinx/zynq-libresdr.dts`: `reset-on-timeout;` on
+`&watchdog0`. On firmware `443959c5` the driver now programs `ZMR = 0x33`
+(WDEN + RSTEN), and stock `disable_hw` resets dr-c cleanly.
+
+### What the fix exposed: DTS edits were not reaching the image
+
+The first rebuild after the DTS edit shipped the OLD DTB (11200 bytes, no
+`reset-on-timeout`, and also missing the PCAP `reserved-memory` node from the
+DTS source). The artifact checksum did change and buildroot did run, but
+buildroot compiles `BR2_LINUX_KERNEL_CUSTOM_DTS_DIR` only when the linux
+package rebuilds, and its stamps do not track `dts/`.
+
+`post-createfs.sh` now compiles `zynq-libresdr.dtb` from `dts/` on every system
+build (kernel tree's cpp include paths and dtc) and overwrites the kernel's
+copy. Verified in the `.fw`: 11376 bytes, `reset-on-timeout` and
+`reserved-memory` both present. `patch_dtb.py` is obsolete.
+
+### Rules that follow
+
+1. Verify any DT change inside the built `.fw`, not in the source tree.
+2. After any reset, watchdog included, the PL is blank but GP0 is live: the
+   bring-up ritual (`LsdrBringup`) comes before any fabric access.
+3. Leave the debug UART on at least one board during long hardware runs; the
+   ECM-link failure and a real hang look identical from the network.
+
+### Still open
+
+- The boot chain (`boot/BOOT.BIN`, `boot/u-boot.img`) is binary-only; its source
+  tree is gone. Plan in `nerves_system_libresdr/boot/README.md`.
+- The reset path behind the unexplained self-recoveries and the 06:19 U-Boot
+  hang. With the SWDT now able to reset, it matters less, but it is not
+  understood.
+
+## DONE 2026-09-28: boot chain rebuilt from source (U-Boot 2025.01 + SPL)
+
+The SPL/U-Boot that had booted these boards since 2026-07-28 came from a tree
+that was lost; only the binaries survived. The boot chain is now built by
+Buildroot from U-Boot 2025.01 plus four patches in
+`nerves_system_libresdr/uboot/patches/`. Full write-up, including provenance,
+verification and the deploy/recovery procedure:
+`nerves_system_libresdr/docs/boot-chain.md`.
+
+Reconstruction, in short: the U-Boot DT came out of the DTB appended to the old
+`u-boot.img`; the ps7_init tables in `ref/ps7` were proven identical, op by op,
+to those in the old SPL, and post_config was taken from it; the defconfig was
+converged by diffing string tables (`SPL_LOAD_FIT` off, `SPL_FPGA` on). The
+new binaries match the old on tables, both DTBs and strings.
+
+Deployment is an opt-in fwup task (`-t bootloader`); normal OTAs never touch
+`BOOT.BIN`. First attempt on dr-c was silent after reset: a guard added to
+`ps7_init()` accepted only rev 3.0 (`PCW_SILICON_VERSION_3` = 2) and these parts
+are rev 3.1 (`PS_VERSION` 3), so MIO/clock/DDR init was skipped. Recovered by
+restoring `BOOT.BIN.prev`/`u-boot.img.prev` with a card reader, fixed (one table
+set for all revisions, as Xilinx's generated code does), redeployed by OTA.
+
+Verified on dr-c: new SPL banner `2025.01 (Jun 08 2026 - 20:20:00 +0000)`,
+env from raw MMC, clean SWDT reset, A/B OTA with U-Boot `saveenv` and
+validation. dr-a and dr-b still run the 2026-07-28 chain.
+
+Correction to the watchdog entry above: the system build does not use Docker or
+colima. Nerves here uses its `container` build runner (Apple's `container`
+CLI); the Buildroot tree persists in the `nerves_system_libresdr-<id>` container
+volume. `uboot/patches` edits need that volume's `build/uboot-2025.01` removed
+before rebuilding, or the old SPL is reused.

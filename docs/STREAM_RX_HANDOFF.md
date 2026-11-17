@@ -75,7 +75,8 @@ assumes. So **test this first** (one IEx session on the board, no rebuild):
    an addr-reg + data-reg pair, so neither `read_block` nor `read_repeat`
    applies as-is. Two options, pick by cost:
    - **Native batched op (recommended, no bitstream change):** add an op to
-     `native/fabric` (the Rust `fabric_port`) that takes
+     `oxibit mem` / `oxibit port` (oxibit, `crates/oxibit/src/port.rs`; it
+     replaced `native/fabric` on 2026-09-29) that takes
      `(addr_reg, data_reg, count)` and loops in native code — write addr, read
      data, ×count — returning all words in ONE port round-trip. This mirrors
      `read_repeat`/`read_block` and collapses 8000 BEAM↔port hops into 1 while
@@ -205,7 +206,7 @@ bottleneck after readout. Options:
 ## Order of work
 
 1. **Tier 0 readout fix** (1 session, software only). Confirm the capture read
-   interface; drop in `read_repeat` or add the native batched `fabric_port` op;
+   interface; drop in `read_repeat` or add the native batched op to oxibit;
    measure the new `rx()` time. Likely gets the waterfall watchable on its own.
 2. **Fabric revision** (the big one): LVDS → FIFO → HP0 packer + write_ptr
    status reg. EHDL design change, openXC7 PAR, fasm audit clean, new bitstream.
@@ -242,8 +243,8 @@ Board / firmware (`~/src/nervezynq/nervezynq/`):
   default to turn into a runtime probe; the frame cycle `[3,1,0,2]`.
 - `lib/nervezynq/sample_format.ex` — the settled bit map (`decode_mimo/2`);
   authority for the DMA packing format.
-- `native/fabric/` — the Rust `fabric_port`; home for the batched-read op if you
-  go that route (Tier 0 option 3a).
+- oxibit `crates/oxibit/src/port.rs` (replaced `native/fabric` on 2026-09-29);
+  home for the batched-read op if you go that route (Tier 0 option 3a).
 - `regmap.exs` in `ehdl/designs/libresdr_radio` — the register spec `top.ex`
   unpacks; source of truth for any new status/write-ptr register.
 
@@ -251,7 +252,7 @@ Reference docs (`~/src/nervezynq/`):
 - `HPDMA_SESSION.md` — the proven DMA engine, hazards, next-steps ledger.
 - `SDR_V1.md` — the V1 driver, the nibble_swap measurement, the next-in-order
   list (stream_rx is #2).
-- `AGENTS.md` — board reach (usb0 `172.31.248.125`), deploy, the port rationale.
+- `AGENTS.md` — board reach (per-board `usb0` addresses), deploy, the port rationale.
 
 Host / consumer (`~/src/nervezynq/scope/`):
 - `lib/nz_scope/link.ex` — TCP client, FFT, feeds canvases; where host-side

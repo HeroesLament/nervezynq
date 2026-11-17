@@ -1,5 +1,10 @@
 # STREAM_RX session log — 2026-08-03 (Fable, session 2)
 
+> Raw session log: records what was believed at the time. Where it disagrees
+> with `nerves_system_libresdr/README.md`, its `docs/`, or `nervezynq/AGENTS.md`,
+> those win.
+
+
 Picking up STREAM_RX_HANDOFF.md. Everything below either happened this
 session (marked measured) or is staged and waiting on a gate.
 
