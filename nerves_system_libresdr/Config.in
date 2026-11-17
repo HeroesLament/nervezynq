@@ -1,3 +1,2 @@
-# Add project-specific packages for Buildroot here
-
-source "$NERVES_DEFCONFIG_DIR/package/extra-dts/Config.in"
+# Board-specific Buildroot packages go in package/<name>/ and are sourced
+# here. There are none at present; the file must exist for BR2_EXTERNAL.

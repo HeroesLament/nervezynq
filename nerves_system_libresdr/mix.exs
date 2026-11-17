@@ -76,7 +76,7 @@ defmodule NervesSystemLibresdr.MixProject do
 
   defp description do
     """
-    Nerves System - BeagleBone Black, BeagleBone Green, PocketBeagle and more
+    Nerves System - LibreSDR (Xilinx Zynq-7020 + AD9363), boot chain built from source
     """
   end
 
@@ -116,6 +116,8 @@ defmodule NervesSystemLibresdr.MixProject do
       "rootfs_overlay",
       "uboot",
       "busybox.fragment",
+      "Config.in",
+      "external.mk",
       "CHANGELOG.md",
       "fwup-ops.conf",
       "fwup.conf",

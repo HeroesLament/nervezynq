@@ -12,6 +12,32 @@ follows:
    releases, and Linux kernel updates. They're also made to fix bugs and add
    features to the build infrastructure.
 
+## libresdr 0.1.0 (unreleased)
+
+Forked from `nerves_system_bbb` v2.30.0 (everything below this section is
+upstream BeagleBone history, kept for reference) and turned into a system for
+the LibreSDR (Zynq-7020 + AD9363).
+
+* Board
+  * Linux 6.12.34, `multi_v7_defconfig` + `linux/nerves-zynq.fragment`
+  * Device tree `dts/xilinx/zynq-libresdr.dts`: 50 MHz PS_CLK, FCLK0-3 held
+    on, PCAP readback reservation, USB peripheral mode, SWDT reset on timeout
+  * `post-createfs.sh` compiles the DTB on every build, so DT edits cannot
+    ship stale
+* Boot chain built from source (2026-09-28)
+  * U-Boot 2025.01 + SPL via Buildroot, patch series in `uboot/patches/`:
+    board DT, `ps7_init`, raw-MMC environment on SD boot, defconfig
+  * Replaces the 2026-07-28 binaries whose source tree was lost; verified
+    against them and on all three boards
+  * New opt-in fwup `bootloader` task; normal OTAs never touch the boot chain
+* A/B updates with bootcount revert driven by `uboot/uboot.env`
+* Removed `nerves_system_bbb` leftovers (2026-09-28): `config-pin`, TI WiLink
+  firmware and modprobe options, `extra-dts` i2c overlays, USB WiFi dongle
+  firmware, BeagleBone kernel defconfig and patch script, U-Boot overlay
+  variables, `bbb`/`cpuinfo` boardid sources, unused `boot/uEnv.txt`. Full
+  list in `README.md`
+* See `README.md`, `docs/boot-chain.md` and `docs/kernel.md`
+
 ## v2.30.0
 
 This is a major update with security and feature updates throughout.

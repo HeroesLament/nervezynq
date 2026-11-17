@@ -7,7 +7,6 @@ path = [
  ".gitignore",
  "CHANGELOG.md",
  "nerves_defconfig",
- "NOTICE",
  "REUSE.toml",
  "mix.exs",
  "mix.lock",
@@ -20,8 +19,7 @@ SPDX-License-Identifier = "CC0-1.0"
 [[annotations]]
 path = [
  "docs/kernel.md",
- "README.md",
- "uboot/README.md"
+ "README.md"
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2016 Frank Hunleth"
@@ -33,7 +31,6 @@ SPDX-License-Identifier = "CC-BY-4.0"
 [[annotations]]
 path = [
  "Config.in",
- "package/**",
  "external.mk",
  "post-build.sh",
  "post-createfs.sh"
@@ -45,8 +42,7 @@ SPDX-License-Identifier = "GPL-2.0-or-later"
 # Linux kernel derived or related files
 [[annotations]]
 path = [
- "linux/*",
- "rootfs_overlay/usr/bin/config-pin"
+ "linux/*"
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "Various"
@@ -78,29 +74,8 @@ path = [
  "busybox.fragment",
  "rootfs_overlay/etc/boardid.config",
  "rootfs_overlay/etc/erlinit.config",
- "rootfs_overlay/etc/fw_env.config",
- "rootfs_overlay/etc/modprobe.d/wl18xx.conf"
+ "rootfs_overlay/etc/fw_env.config"
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "None"
 SPDX-License-Identifier = "CC0-1.0"
-
-# https://github.com/adafruit/Fritzing-Library
-[[annotations]]
-path = [
- "assets/images/beaglebone-black.png"
-]
-precedence = "aggregate"
-SPDX-FileCopyrightText = "Adafruit"
-SPDX-License-Identifier = "CC-BY-SA-3.0"
-
-# TI Bluetooth files
-[[annotations]]
-path = [
- "rootfs_overlay/lib/firmware/ti-connectivity/*",
-]
-precedence = "aggregate"
-SPDX-FileCopyrightText = "2008 – 2013 Texas Instruments Incorporated"
-SPDX-License-Identifier = "LicenseRef-TI-Release"
-
-

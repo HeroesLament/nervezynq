@@ -2,7 +2,8 @@
 /*
  * LibreSDR (PlutoSDR clone, Zynq-7020, board rev 5)
  * Facts derived from hz12opensource/libresdr patches + ADI hdl system_bd.tcl
- * Radio (AD9364) intentionally omitted: driven from userspace via UIO.
+ * Radio (AD9363) intentionally omitted: driven from userspace over SPI on PL
+ * pins (Nervezynq.AD9363). See docs/kernel.md for why each node is here.
  */
 /dts-v1/;
 #include "zynq-7000.dtsi"
@@ -114,7 +115,7 @@
 	phy-mode = "rgmii-id";
 	phy-handle = <&phy0>;
 
-	phy0: ethernet-phy@0 {/* Marvell 88E1512 */
+	phy0: ethernet-phy@0 {/* RTL8211E (kernel: "driver [RTL8211E Gigabit Ethernet]") */
 		reg = <0>;
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reset-gpios = <&gpio0 46 GPIO_ACTIVE_LOW>;
@@ -130,6 +131,15 @@
 
 &watchdog0 {
 	status = "okay";
+	/*
+	 * Without this the cdns-wdt driver leaves ZMR.RSTEN clear and the SWDT
+	 * only raises an interrupt on timeout ("Internal reset not enabled").
+	 * nerves_heart then stops petting a watchdog that can never reset the
+	 * board, so a CPU stalled on an unanswered GP0/HP read stays hung until
+	 * a power cycle. Verified on hardware 2026-09-28: with RSTEN set, a
+	 * deliberate GP0 read into blank fabric recovers via SWDT reset in ~37 s.
+	 */
+	reset-on-timeout;
 };
 
 &usb0 {

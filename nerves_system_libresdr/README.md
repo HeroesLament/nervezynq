@@ -1,310 +1,202 @@
-# Generic BeagleBone Support
+# nerves_system_libresdr
 
-[![Hex version](https://img.shields.io/hexpm/v/nerves_system_bbb.svg "Hex version")](https://hex.pm/packages/nerves_system_bbb)
-[![CI](https://github.com/nerves-project/nerves_system_bbb/actions/workflows/ci.yml/badge.svg)](https://github.com/nerves-project/nerves_system_bbb/actions/workflows/ci.yml)
-[![REUSE status](https://api.reuse.software/badge/github.com/nerves-project/nerves_system_bbb)](https://api.reuse.software/info/github.com/nerves-project/nerves_system_bbb)
+Nerves system for the LibreSDR: a Zynq-7020 board with an AD9363 transceiver
+(a PlutoSDR-class design, board rev 5). Everything that runs on the ARM side is
+built from source by Buildroot: the U-Boot SPL with the board's `ps7_init`,
+U-Boot, Linux, and the root filesystem. The only closed code in the boot path is
+the Zynq's on-die BootROM.
 
-This is the base Nerves System configuration for the [BeagleBone Black](http://beagleboard.org/black),
-[BeagleBone Green](http://beagleboard.org/green), [BeagleBone Green Wireless](https://beagleboard.org/green-wireless/),
-and [PocketBeagle](https://beagleboard.org/pocket).
+This directory started as a fork of `nerves_system_bbb` v2.30.0. The BeagleBone
+files were removed on 2026-09-28; see [What was removed from the fork](#what-was-removed-from-the-fork).
 
-![BeagleBone Black image](assets/images/beaglebone-black.png)
-<br><sup>[Image credit](#fritzing)</sup>
+## Hardware
 
-| Feature              | Description                     |
-| -------------------- | ------------------------------- |
-| CPU                  | 1 GHz ARM Cortex-A8             |
-| Memory               | 512 MB DRAM                     |
-| Storage              | 4 GB eMMC Flash and MicroSD     |
-| Linux kernel         | 6.12 w/ BBB patches             |
-| IEx terminal         | UART `ttyS0`                    |
-| GPIO, I2C, SPI       | Yes - [Elixir Circuits](https://github.com/elixir-circuits) |
-| ADC                  | Yes                             |
-| PWM                  | Yes, but no Elixir support      |
-| UART                 | ttyS0 + more via device tree overlay |
-| Camera               | None                            |
-| Ethernet             | Yes                             |
-| WiFi                 | Beaglebone Green Wireless (wl18xx driver). Other requires USB WiFi dongle/driver |
-| HW Watchdog          | AM335x watchdog enabled on boot. Be sure to enable `heart` in your vm.args or the device will reboot |
+| | |
+|---|---|
+| SoC | Xilinx Zynq-7020, `xc7z020clg400-1`, silicon rev 3.1 (`PS_VERSION` 3) |
+| CPU | 2x ARM Cortex-A9 (ARMv7-A, NEON/VFPv3) |
+| Memory | 1 GB DDR3 |
+| Storage | microSD on SD0 (no card-detect or write-protect lines) |
+| Radio | AD9363, SPI on PL pins, driven from userspace; not in the device tree |
+| USB | OTG connector, USB3320 ULPI PHY; used as a **device only** (`dr_mode = "peripheral"`) |
+| Ethernet | GEM0, RTL8211E PHY, RGMII; negotiates 100 Mbps (not investigated) |
+| Console | UART0, 115200 8N1, on the DEBUG USB-C (FT4232H channel C) |
+| JTAG | DEBUG USB-C, FT4232H channel A (`openocd -f ../openocd/libresdr.cfg`) |
+| Watchdog | Zynq SWDT (Cadence `cdns,wdt-r1p2`), reset on timeout |
+| LED / button | green LED on MIO15 (heartbeat trigger); button on MIO14 |
+| PL | Artix-7-class fabric, blank at boot; loaded at runtime from Linux |
 
-## Using
+PS reference clock is 50 MHz, not the usual 33.333 MHz.
 
-The most common way of using this Nerves System is create a project with `mix
-nerves.new` and to export `MIX_TARGET=bbb`. See the [Getting started
-guide](https://nerves.hexdocs.pm/getting-started.html#creating-a-new-nerves-app)
-for more information.
+## Software
 
-If you need custom modifications to this system for your device, clone this
-repository and update as described in [Making custom
-systems](https://nerves.hexdocs.pm/customizing-systems.html).
+| | |
+|---|---|
+| Buildroot | 2026.05, via `nerves_system_br` 1.34.0 |
+| Toolchain | `nerves_toolchain_armv7_nerves_linux_gnueabihf` 15.3.0 (GCC 15) |
+| Boot chain | U-Boot 2025.01 SPL + U-Boot, with `uboot/patches/` ([docs/boot-chain.md](docs/boot-chain.md)) |
+| Kernel | Linux 6.12.34, `multi_v7_defconfig` + `linux/nerves-zynq.fragment` ([docs/kernel.md](docs/kernel.md)) |
+| Device tree | `dts/xilinx/zynq-libresdr.dts` ([docs/kernel.md](docs/kernel.md)) |
+| Root filesystem | squashfs, read-only, A/B slots |
+| Application data | f2fs on partition 4, mounted at `/root` |
+| Update | fwup, A/B with automatic revert (`uboot/uboot.env`) |
 
-## Preparing your BeagleBone
+## Boot flow
 
-If your BeagleBone has eMMC (the PocketBeagle doesn't), it will be configured to
-try the eMMC first when looking for software on boot. If you haven't
-reprogrammed it, it will boot to Debian even if a MicroSD card is inserted with
-good software. To boot from the MicroSD card, hold down the USER button and
-apply power.
+BootROM loads `BOOT.BIN` (the U-Boot SPL) from the FAT partition. The SPL runs
+`ps7_init` (MIO, PLLs, clocks, DDR3), then loads `u-boot.img`. U-Boot reads its
+environment from a raw area of the card, picks slot A or B, and boots
+`uImage.<slot>` with `zynq-libresdr.<slot>.dtb`. Details, provenance and
+recovery: [docs/boot-chain.md](docs/boot-chain.md).
 
-When starting with Nerves, you will find that booting from a MicroSD card is
-convenient since you can easily recover from broken software images. Holding
-down the USER button will get old. To force the BeagleBone to boot from the
-MicroSD card, simply corrupt the image on the eMMC memory.  Don't worry, the
-BeagleBone website has instructions for restoring Debian.
+The SPL's `ps7_post_config` enables the PS/PL level shifters and releases the
+fabric resets. The PL is still blank at that point, so any M_AXI_GP0 access
+before a bitstream is loaded hangs the CPU. With the watchdog in reset mode the
+board recovers in about 40 s, but the rule is: load a bitstream before touching
+the fabric. See `../nervezynq/AGENTS.md`, "Loading a bitstream".
 
-From Debian:
+## SD card layout
 
-```bash
-debian@beaglebone:~$ sudo dd if=/dev/zero of=/dev/mmcblk0 bs=1M count=100
-100+0 records in
-100+0 records out
-104857600 bytes (105 MB) copied, 5.72098 s, 18.3 MB/s
-debian@beaglebone:~$ sudo reboot
-```
+Offsets in 512-byte blocks, from `fwup_include/fwup-common.conf`.
 
-When it reboots, it will boot from the MicroSD slot. If a MicroSD card hasn't
-been inserted or if there are errors reading it, you will see the letter `C`
-printed repeatedly on the console port.
+| Offset | Size | What |
+|---|---|---|
+| 0 | 1 | MBR |
+| 2048 | 256 (128 KiB) | U-Boot environment, raw (no partition) |
+| 4096 | 57344 (28 MiB) | p1, FAT32 `BOOT`: `BOOT.BIN`, `u-boot.img`, `uImage.a/b`, `zynq-libresdr.a/b.dtb` |
+| 63488 | 286720 (140 MiB) | p2, rootfs A (squashfs) |
+| 350208 | 286720 (140 MiB) | p3, rootfs B (squashfs) |
+| 636928 | rest | p4, application data (f2fs), `/root` |
 
-## Console access
+Kernel and DTB live on the FAT partition, one pair per slot, because U-Boot's
+squashfs support is slow. A normal OTA writes only the inactive slot's kernel,
+DTB and rootfs. `BOOT.BIN` and `u-boot.img` are shared and are only written by
+the `complete` task (a fresh card) or the opt-in `bootloader` task.
 
-The console is configured to output to the 6 pin header on the
-BeagleBone that's labeled J1. A 3.3V FTDI cable is needed to access the output.
+## A/B updates and revert
 
-The HDMI output has been disabled via device tree to free up pins on the GPIO
-header. If you would like console access via HDMI, you will need to enable HDMI
-support in the Linux kernel, remove the HDMI disable argument in the uboot
-script providing kernel arguments, and change `erlinit.conf` to output to
-`tty1`.
+The boot logic is entirely in `uboot/uboot.env`, which `post-createfs.sh` turns
+into `uboot-env.bin`:
 
-## Provisioning devices
+- `nerves_fw_active` selects the slot (`a` = rootfs p2, `b` = p3).
+- After an OTA, `upgrade_available=1`. U-Boot increments `bootcount` on every
+  boot and saves the environment. Past `bootlimit` (1), `nerves_revert`
+  switches back to the other slot.
+- The application's `Nervezynq.FirmwareValidator` marks the new slot good 30 s
+  after boot (`nerves_fw_validated=1`, `upgrade_available=0`).
 
-This system supports storing provisioning information in a small key-value store
-outside of any filesystem. Provisioning is an optional step and reasonable
-defaults are provided if this is missing.
+On the target, `/etc/fw_env.config` points `fw_printenv`/`fw_setenv` at the same
+area (`/dev/mmcblk0`, offset `0x100000`, 128 KiB); `Nerves.Runtime.KV` reads it.
 
-Provisioning information can be queried using the Nerves.Runtime KV store's
-[`Nerves.Runtime.KV.get/1`](https://nerves-runtime.hexdocs.pm/Nerves.Runtime.KV.html#get/1)
-function.
+## Identity and provisioning
 
-Keys used by this system are:
-
-Key                    | Example Value     | Description
-:--------------------- | :---------------- | :----------
-`nerves_serial_number` | `"12345678"`       | By default, this string is used to create unique hostnames and Erlang node names. If unset, it defaults to part of the BBB's serial number.
-
-The normal procedure would be to set these keys once in manufacturing or before
-deployment and then leave them alone.
-
-For example, to provision a serial number on a running device, run the following
-and reboot:
-
-```elixir
-iex> cmd("fw_setenv nerves_serial_number 12345678")
-```
-
-This system supports setting the serial number offline. To do this, set the
-`NERVES_SERIAL_NUMBER` environment variable when burning the firmware. If you're
-programming MicroSD cards using `fwup`, the commandline is:
+Each card is burned with a serial number, stored in the U-Boot environment as
+`nerves_serial_number`:
 
 ```sh
-sudo NERVES_SERIAL_NUMBER=12345678 fwup path_to_firmware.fw
+sudo NERVES_SERIAL_NUMBER=lsdr-c fwup -a -i nervezynq.fw -t complete -d /dev/rdiskN
 ```
 
-Serial numbers are stored on the MicroSD card so if the MicroSD card is
-replaced, the serial number will need to be reprogrammed. The numbers are stored
-in a U-boot environment block. This is a special region that is separate from
-the application partition so reformatting the application partition will not
-lose the serial number or any other data stored in this block.
+- `boardid` reads it (`/etc/boardid.config`); erlinit names the host
+  `nerves-` plus its last four characters (`-n nerves-%-.4s`): `lsdr-c` is
+  `nerves-dr-c`.
+- The application's `usb-gadget-init` hashes it into the USB gadget's MAC
+  addresses (`02:1a:35:HH:LL:22` board, `:23` host) and USB serial, and
+  VintageNetDirect derives a per-board /30 for `usb0`. Boards with the same
+  serial collide on the host.
 
-Additional key value pairs can be provisioned by overriding the default
-provisioning.conf file location by setting the environment variable
-`NERVES_PROVISIONING=/path/to/provisioning.conf`. The default provisioning.conf
-will set the `nerves_serial_number`, if you override the location to this file,
-you will be responsible for setting this yourself.
+## Console and network
 
-## Linux and U-Boot versions
+- **USB (primary):** the application binds a configfs CDC-ECM + CDC-ACM gadget
+  (`usb-gadget-init`, run by erlinit `--pre-run-exec`). ECM gives `usb0`, and
+  `ssh <board-ip>` lands in IEx. The kernel needs `dr_mode = "peripheral"`; with
+  `otg` the controller can come up as a USB host and the board has no USB
+  network at all.
+- **UART:** IEx is also on UART0 at 115200 (the application's `erlinit.config`
+  names `ttyGS0`, which does not exist yet when erlinit starts; it logs
+  `error setting controlling terminal: /dev/ttyGS0`). The UART also shows the
+  SPL, U-Boot and kernel logs, which is the only view of a board that does not
+  reach userspace.
+- **Ethernet:** `eth0`, DHCP.
 
-The BeagleBone Black has many options for Linux that vary by kernel version and
-patch set. Nerves tracks those maintained by Robert Nelson at
-[eewiki.net](https://eewiki.net/display/linuxonarm/BeagleBone+Black).
+## Building
 
-Nerves also integrates the BeagleBone Black's U-boot patches to support device
-tree overlays. Support mirrors the BeagleBone docs with the exception that to
-set U-boot environment variables, See the section below for more information.
+From the application:
 
-## Device tree overlays
-
-Most pins on the BBB's headers are configurable via a mechanism called the
-device tree. The device tree is made up of device tree files and overlay files
-that get compiled down into one or more `.dtb` or `.dtbo` files. The files tell
-Linux what drivers to load and what parameters to use for things that it can't
-figure out by itself.
-
-There are two strategies for dealing with the device tree:
-
-1. Modify the device tree files for an existing board to make your own
-2. Load device tree overlay files
-
-Upstream BBB encourages the second option since it can be easier. The tradeoff
-is that if anything goes wrong or your hardware doesn't match their assumptions,
-it's a little harder to debug.
-
-The device tree files are loaded by U-Boot. Nerves installs all of the
-Beagleboard overlay files to `/lib/firmware` and configures U-Boot to closely
-match upstream. This means that most of the upstream documentation on device
-tree is usable. The difference is that instead of using `/boot/uEnv.txt` to
-customize the overlays, you need to set the variables in the U-Boot environment
-block. This can be done by running `cmd("fw_setenv <key> <value>")` from the IEx
-prompt or by adding the variables to the `fwup_include/provisioning.conf` file.
-
-For example, at the IEx prompt:
-
-```elixir
-cmd("fw_setenv uboot_overlay_addr7 /lib/firmware/BB-UART1-00A0.dtbo")
+```sh
+cd ../nervezynq
+MIX_TARGET=libresdr mix firmware
 ```
 
-Or by updating the configuration file:
+`mix.exs` in the application depends on this directory with
+`nerves: [compile: true]`, so the system is built from source whenever its
+checksum changes (the `package_files` list in this directory's `mix.exs`).
+Nerves runs Buildroot through its `container` build runner (Apple's `container`
+CLI on macOS); the Buildroot tree persists in the `nerves_system_libresdr-<id>`
+container volume, so rebuilds are incremental (one to three minutes).
 
-```
-uboot_setenv(uboot-env, "uboot_overlay_addr7", "/lib/firmware/BB-UART1-00A0.dtbo")
-```
+Buildroot does not rebuild a package when an input outside it changes:
 
-See
-[elinux.org/Beagleboard:BeagleBoneBlack_Debian](https://elinux.org/Beagleboard:BeagleBoneBlack_Debian#U-Boot_.2Fboot.2FuEnv.txt_configuration)
-for documentation on the variables.
+- `dts/` is handled: `post-createfs.sh` compiles `zynq-libresdr.dtb` on every
+  build.
+- `uboot/patches/`, the U-Boot defconfig and `linux/` fragments are not: delete
+  that package's build directory in the volume first. Commands in
+  [docs/boot-chain.md](docs/boot-chain.md), "Stale-build traps".
 
-### Universal I/O
+Verify a change in the built image, not the source tree.
 
-The BBB's Universal device tree overlay lets you configure pins at runtime. This
-system enables the universal overlay by default. See the
-`enable_uboot_cape_universal` setting in the default `fwup_include/provisioning.conf` file.
+## Deploying
 
-See
-[beaglebone-universal-io](https://github.com/cdsteinkuehler/beaglebone-universal-io)
-for documentation. You'll see references to an RCN-built kernel. RCN is the
-initials for Robert Nelson and we use his kernel patches.
+| What | How |
+|---|---|
+| Normal update | `MIX_TARGET=libresdr ./upload.sh <board-ip>` from `../nervezynq` (OTA, A/B) |
+| Boot chain update | opt-in fwup `bootloader` task, one board at a time ([docs/boot-chain.md](docs/boot-chain.md)) |
+| Fresh card | `fwup -t complete` with `NERVES_SERIAL_NUMBER` (above) |
+| Unreachable board | fwup tasks against its card in a reader ([docs/boot-chain.md](docs/boot-chain.md), "Card-reader path") |
 
-### ADCs
+## Directory layout
 
-The following example shows how to read values from the 7 ADC inputs in Elixir.
-You will first need to load "BB-ADC" device tree overlay using the guide described
-above.
+| Path | What |
+|---|---|
+| `nerves_defconfig` | Buildroot configuration: toolchain, kernel, U-Boot, packages |
+| `mix.exs` | Nerves package definition; `package_files` is the artifact checksum |
+| `linux/nerves-zynq.fragment` | Kernel config applied on top of `multi_v7_defconfig` |
+| `linux/0002-squashfs-*.patch` | Kernel patch carried from upstream Nerves systems |
+| `dts/xilinx/zynq-libresdr.dts` | Linux device tree |
+| `uboot/patches/` | U-Boot 2025.01 patch series (board DT, `ps7_init`, env fix, defconfig) |
+| `uboot/uboot.env` | U-Boot environment source: A/B boot, bootcount, revert |
+| `boot/*.2026-07-28`, `boot/BOOT.BIN.vendor-backup` | Reference binaries only ([boot/README.md](boot/README.md)) |
+| `fwup.conf` | Firmware image and tasks: `complete`, `upgrade.a/b`, `bootloader`, `provision` |
+| `fwup-ops.conf` | On-target operations: `revert`, `validate`, `factory-reset`, `status` |
+| `fwup_include/` | Partition layout and provisioning, shared by both fwup files |
+| `post-build.sh` | Builds `ops.fw` into the rootfs, copies `fwup_include` |
+| `post-createfs.sh` | Assembles `BOOT.BIN`, `uImage`, `uboot-env.bin`, compiles the DTB |
+| `rootfs_overlay/etc/erlinit.config` | Mounts, hostname, console (the application overrides it) |
+| `rootfs_overlay/etc/boardid.config`, `fw_env.config` | Serial number source (U-Boot env, MAC fallback); U-Boot env location |
+| `busybox.fragment` | Busybox options on top of the Nerves defaults |
+| `docs/` | [boot-chain.md](docs/boot-chain.md), [kernel.md](docs/kernel.md) |
 
-```elixir
-iex(nerves@nerves-0014.local)> ls "/sys/bus/iio/devices/iio:device0"
-buffer              dev                 in_voltage0_raw     in_voltage1_raw
-in_voltage2_raw     in_voltage3_raw     in_voltage4_raw     in_voltage5_raw
-in_voltage6_raw     name                of_node             power
-scan_elements       subsystem           uevent
-iex(nerves@nerves-0014.local)> File.read("/sys/bus/iio/devices/iio:device0/in_voltage0_raw")
-{:ok, "3891\n"}
-iex(nerves@nerves-0014.local)> File.read("/sys/bus/iio/devices/iio:device0/in_voltage0_raw")
-{:ok, "3890\n"}
-iex(nerves@nerves-0014.local)> File.read("/sys/bus/iio/devices/iio:device0/in_voltage0_raw")
-{:ok, "3891\n"}
-```
+## What was removed from the fork
 
-### SPI
+Removed 2026-09-28 because nothing on this board uses them:
 
-The following examples shows how to get SPI0 functional in Elixir.
+| Removed | Was |
+|---|---|
+| `rootfs_overlay/usr/bin/config-pin` | BeagleBone cape pin-mux tool |
+| `rootfs_overlay/etc/modprobe.d/wl18xx.conf`, `rootfs_overlay/lib/firmware/ti-connectivity/` | TI WiLink WiFi/BT options and firmware (BeagleBone Black Wireless) |
+| `package/extra-dts`, `BR2_PACKAGE_EXTRA_DTS` | BeagleBone i2c1/i2c2 DT overlays in `/lib/firmware` |
+| `BR2_PACKAGE_LINUX_FIRMWARE` (Ralink RT2xx, Realtek 87xx) | USB WiFi dongle firmware; `usb0` is peripheral-only, there is no USB host |
+| `linux/linux-6.12.defconfig`, `linux/update-kernel-patch.sh` | BeagleBone kernel config and rcn-ee patch tooling; never read by this build |
+| U-Boot overlay/cape variables in `fwup_include/provisioning.conf` | BeagleBone U-Boot overlay controls; only `nerves_serial_number` remains |
+| `bbb` and `cpuinfo` sources in `rootfs_overlay/etc/boardid.config` | BeagleBone EEPROM and AM335x `/proc/cpuinfo` serial |
+| `boot/uEnv.txt` | Vendor-style `uenvcmd` boot script; U-Boot runs `bootcmd` from the raw-MMC env and never read it |
+| `assets/images/beaglebone-black.png`, `LICENSES/CC-BY-SA-3.0.txt`, `LICENSES/LicenseRef-TI-Release.txt` | Image and licenses for the removed files |
 
-Load the "BB-SPIDEV0" device tree overlay using the guide described above.
+`CHANGELOG.md` below the `libresdr` section is upstream `nerves_system_bbb`
+history, kept for reference.
 
-Verify that the device drivers are loaded and read spi0 transfers:
+## Licensing
 
-```elixir
-iex(nerves@nerves-0014.local)> ls "/dev"
-  ...
-        spidev1.0              spidev1.1              spidev2.0              spidev2.1
-  ...
-iex(nerves@nerves-0014.local)> File.read "/sys/bus/spi/devices/spi1.0/statistics/transfers"
-{:ok, "0"}
-```
-
-If you have included [circuits_spi](https://github.com/elixir-circuits/circuits_spi) as a
-dependency, you can start it now and test a transfer:
-
-> The example below should work without any additional hardware connected to the
-> BBB. If you have SPI hardware connected to the BBB, your returned binary might
-> be different.
-
-```elixir
-iex(nerves@nerves-0014.local)> {:ok, ref} = Circuits.SPI.open("spidev0.0")
-{:ok, #Reference<...>}
-iex(nerves@nerves-0014.local)> Circuits.SPI.transfer(ref, <<1,2,3,4>>)
-<<255, 255, 255, 255>>
-```
-
-> Note: If you get back all 0's, then you have likely have not configured the
-> overlay pins correctly.
-
-## PRUS
-
-The PRUs are controlled via `uio`. Two kernel modules are needed for them to work.
-
-```elixir
-iex> :os.cmd('modprobe uio uio_pruss')
-iex> ls "/sys/class/uio"
-uio0     uio1     uio2     uio3     uio4     uio5     uio6     uio7
-```
-
-Check the beaglebone [am335x_pru_package](https://github.com/beagleboard/am335x_pru_package/)
-repository for samples on how to interface PRUs.
-
-## Supported USB WiFi devices
-
-The base image includes drivers and firmware for the TI WiLink8 (`wl18xx`),
-Ralink RT53xx (`rt2800usb` driver) and RealTek RTL8712U (`r8712u` driver)
-devices. All WiFi drivers are compiled as modules. Some drivers can be loaded
-automatically. If you have a Beaglebone Green or Beaglebone Black with built-in
-WiFi, see the next section.
-
-We are still working out which subset of all possible WiFi dongles to support in
-our images. At some point, we may have the option to support all dongles and
-selectively install modules at packaging time, but until then, these drivers and
-their associated firmware blobs add significantly to Nerves release images.
-
-If you are unsure what driver your WiFi dongle requires, run Raspbian and
-configure WiFi for your device. At a shell prompt, run `lsmod` to see which
-drivers are loaded.  Running `dmesg` may also give a clue. When using `dmesg`,
-reinsert the USB dongle to generate new log messages if you don't see them.
-
-## Bluetooth
-
-The Beaglebone boards with built-in WiFi support use the WiLink8 WL1835 module.
-This is a combo WiFi/Bluetooth module. Bluetooth is not well supported in
-Nerves. However, Nerves is built on Linux so you can enable and use `bluez`.
-Another option is to use [harald](https://hex.pm/packages/harald) which can
-communicate with the module using low level Bluetooth HCI commands.
-
-The WL1835 requires initialization before first use. This is done via a "BTS"
-file. The `TIInit_11.8.32.bts` file is included in this system under
-`lib/firmware/ti-connectivity`. The Bluetooth kernel modules know how to load it
-automatically. If you're using `harald`, you will need to load it yourself. The
-source of the "BTS" file is http://www.ti.com/tool/wl18xx-bt-sp.
-
-[Image credit](#fritzing): This image is from the [Fritzing](http://fritzing.org/home/) parts library.
-
-## NervesKey
-
-Using NervesKey on an I2C bus requires the bus speed to be lowered. This can be
-done using uboot overlays specific to the I2C bus that NervesKey is attached
-to. The device tree blob can be found in `/lib/firmware`.
-
-Choose one of the following:
-
-```text
-uboot_setenv(uboot-env, "uboot_overlay_addr4", "/lib/firmware/i2c1-clock-frequency-100khz.dtbo")
-uboot_setenv(uboot-env, "uboot_overlay_addr5", "/lib/firmware/i2c2-clock-frequency-100khz.dtbo")
-```
-
-You can configure your project to enable these device tree overlays by copying the
-`fwup_include/provisioning.conf` file to your project, updating the file to
-enable the uboot overlay for your NervesKey i2c bus, and by adding the following
-to your Mix Application configuration:
-
-```elixir
-config :nerves, :firmware,
-  provisioning: "project/relative/path/to/provisioning.conf"
-```
+Buildroot, the kernel and U-Boot are GPL-2.0; see `LICENSES/` and
+`REUSE.toml`. The boot chain is built entirely from GPL source; the reference
+binaries in `boot/` are not part of the build.

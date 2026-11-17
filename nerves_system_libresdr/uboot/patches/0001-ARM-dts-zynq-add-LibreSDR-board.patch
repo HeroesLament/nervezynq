@@ -1,0 +1,89 @@
+From db20062e6e777704cf7cd167721e0f1ae854f2c3 Mon Sep 17 00:00:00 2001
+From: HeroesLament <heroeslament@nunyabiz.net>
+Date: Mon, 28 Sep 2026 18:15:37 -0800
+Subject: [PATCH 1/4] ARM: dts: zynq: add LibreSDR board
+
+Board device tree for the LibreSDR (Zynq-7020, xc7z020clg400-1):
+UART0 console, SD0 boot and environment, QSPI, 1 GB DDR, 50 MHz PS_CLK.
+
+Reconstructed from the DTB embedded in the u-boot.img that has booted
+these boards since 2026-07-28.
+---
+ arch/arm/dts/Makefile          |  1 +
+ arch/arm/dts/zynq-libresdr.dts | 52 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 53 insertions(+)
+ create mode 100644 arch/arm/dts/zynq-libresdr.dts
+
+diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
+index 6ad59aee..e5c20e8b 100644
+--- a/arch/arm/dts/Makefile
++++ b/arch/arm/dts/Makefile
+@@ -248,6 +248,7 @@ dtb-$(CONFIG_ARCH_ZYNQ) += \
+ 	zynq-zc770-xm012.dtb \
+ 	zynq-zc770-xm013.dtb \
+ 	zynq-zed.dtb \
++	zynq-libresdr.dtb \
+ 	zynq-zturn.dtb \
+ 	zynq-zturn-v5.dtb \
+ 	zynq-zybo.dtb \
+diff --git a/arch/arm/dts/zynq-libresdr.dts b/arch/arm/dts/zynq-libresdr.dts
+new file mode 100644
+index 00000000..68274145
+--- /dev/null
++++ b/arch/arm/dts/zynq-libresdr.dts
+@@ -0,0 +1,52 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * LibreSDR (Zynq-7020, xc7z020clg400-1) -- U-Boot board device tree.
++ *
++ * Reconstructed 2026-09-28 from the DTB embedded in the u-boot.img built
++ * 2026-07-28 (the tree it came from was lost). Only what U-Boot and the SPL
++ * need: UART0 console, SD0 boot/env, QSPI, 1 GB DDR, 50 MHz PS_CLK.
++ * The Linux DT is separate: nerves_system_libresdr/dts/xilinx/zynq-libresdr.dts.
++ */
++/dts-v1/;
++#include "zynq-7000.dtsi"
++
++/ {
++	model = "LibreSDR (Zynq-7020)";
++	compatible = "libresdr,zynq-libresdr", "xlnx,zynq-7000";
++
++	aliases {
++		serial0 = &uart0;
++		spi0 = &qspi;
++		mmc0 = &sdhci0;
++	};
++
++	memory@0 {
++		device_type = "memory";
++		reg = <0x0 0x40000000>;
++	};
++
++	chosen {
++		bootargs = "";
++		stdout-path = "serial0:115200n8";
++	};
++};
++
++&clkc {
++	ps-clk-frequency = <50000000>;
++	fclk-enable = <0xf>;
++};
++
++&uart0 {
++	bootph-all;
++	status = "okay";
++};
++
++&qspi {
++	bootph-all;
++	status = "okay";
++};
++
++&sdhci0 {
++	bootph-all;
++	status = "okay";
++};
+-- 
+2.43.0
+

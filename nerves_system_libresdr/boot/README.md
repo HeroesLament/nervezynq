@@ -1,40 +1,15 @@
 # Boot artifacts
 
-`BOOT.BIN` is currently the **vendor** LibreSDR first-stage image (FSBL +
-u-boot) lifted from the stock SD card. It is not redistributable, which is the
-main thing blocking this system from being published.
+`BOOT.BIN` (U-Boot SPL with `ps7_init`) and `u-boot.img` are built from source
+by Buildroot from U-Boot 2025.01 plus `../uboot/patches/`. They are not kept
+here. The full description (boot flow, patch series, provenance, verification,
+deployment, recovery) is in `../docs/boot-chain.md`.
 
-Replacing it is "Path B": generate `ps7_init.c` from the extracted register
-tables, build the FSBL from regymm/embeddedsw, and pack with `mkbootimage`.
-That also gets us a Nerves-aware u-boot -- the vendor onThat also gets us a Nerves-aware u-boot -- the vendor onThat also gets us a Nerves-aware u-boot -- the vendor onThat also gets us a Nerves-aware u-boot -- the vendor onThaclear; cat > post-createfs.sh <<'EOF'
-#!/bin/sh
+| File | What it is |
+|---|---|
+| `BOOT.BIN.2026-07-28`, `u-boot.img.2026-07-28` | The binaries that booted these boards from 2026-07-28 until the from-source build replaced them. Reference for verification and last-resort recovery. Not used by the build. |
+| `BOOT.BIN.vendor-backup` | The stock LibreSDR FSBL + u-boot image from the vendor SD card. Reference only; not redistributable. |
 
-set -e
-
-FWUP_CONFIG=$NERVES_DEFCONFIG_DIR/fwup.conf
-
-# Run the common post-image processing for nerves
-$BR2_EXTERNAL_NERVES_PATH/board/nerves-common/post-createfs.sh $TARGET_DIR $FWUP_CONFIG
-
-# --- Zynq boot artifacts -------------------------------------------------
-#
-# fwup.conf references BOOT.BIN, uEnv.txt and uImage as file-resources, but
-# Buildroot produces none of them: BOOT.BIN is a prebuilt blob and u-boot on
-# this board wants a uImage (legacy header) rather than the bare zImage that
-# Buildroot emits. Generate them here so a plain `mix firmware` always works.
-# Previously these were restored by hand after every system rebuild, which was
-# a reliable source of "fwup: can't open path .../BOOT.BIN" surprises.
-
-cp -f $NERVES_DEFCONFIG_DIR/boot/BOOT.BIN $BINARIES_DIR/BOOT.BIN
-cp -f $NERVES_DEFCONFIG_DIR/boot/uEnv.txt $BINARIES_DIR/uEnv.txt
-
-# Load/entry 0x8000 matches the vendor u-boot's expectations (verified against
-# the stock uImage header).
-$HOST_DIR/usr/bin/mkimage \
-    -A arm -O linux -T kernel -C none \
-    -a 0x8000 -e 0x8000 \
-    -n "Nerves LibreSDR" \
-    -d $BINARIES_DIR/zImage \
-    $BINARIES_DIR/uImage > /dev/null
-
-echo "post-createfs: installed BOOT.BIN, uEnv.txt and uImage"
+No `.bit` file belongs here. A bitstream on the boot partition is programmed by
+U-Boot before Linux and hung the boot once (`docs/journal/HANDOFF.md`, "SOLVED:
+the board did not boot because U-Boot was programming the PL at boot").

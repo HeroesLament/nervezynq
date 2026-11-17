@@ -1,299 +1,127 @@
-# BBB kernel options
+# Linux kernel and device tree
 
-## General Linux
+What the LibreSDR kernel is built from, why each non-default option and DT node
+is there, and how to change them without shipping a stale build.
 
-```config
-# CONFIG_LOCALVERSION_AUTO is not set
-CONFIG_SYSVIPC=y
-CONFIG_POSIX_MQUEUE=y
-CONFIG_NO_HZ_IDLE=y
-CONFIG_HIGH_RES_TIMERS=y
-CONFIG_NAMESPACES=y
-CONFIG_SCHED_AUTOGROUP=y
-CONFIG_SYSCTL_SYSCALL=y
-CONFIG_KALLSYMS_ALL=y
-CONFIG_BPF_SYSCALL=y
-CONFIG_USERFAULTFD=y
-CONFIG_EMBEDDED=y
-# CONFIG_COMPAT_BRK is not set
-CONFIG_SLAB_FREELIST_RANDOM=y
-CONFIG_PROFILING=y
-CONFIG_JUMP_LABEL=y
-CONFIG_CC_STACKPROTECTOR_REGULAR=y
-CONFIG_MODULES=y
-CONFIG_MODULE_FORCE_LOAD=y
-CONFIG_MODULE_UNLOAD=y
-CONFIG_MODULE_FORCE_UNLOAD=y
-CONFIG_MODVERSIONS=y
+## Kernel
+
+| | |
+|---|---|
+| Version | Linux 6.12.34 (kernel.org stable tarball, `BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION`) |
+| Base config | `multi_v7_defconfig` (`BR2_LINUX_KERNEL_DEFCONFIG="multi_v7"`) |
+| Board config | `linux/nerves-zynq.fragment`, merged on top |
+| Patches | every `*.patch` in `linux/` (`BR2_LINUX_KERNEL_PATCH`); currently `0002-squashfs-provide-backing_dev_info...`, carried from the upstream Nerves systems |
+| Image | zImage, wrapped as a legacy `uImage` (load/entry `0x8000`) by `post-createfs.sh` |
+
+### What the fragment adds, and why
+
+Grouped as in `linux/nerves-zynq.fragment`, whose comments carry the detail.
+
+**Nerves basics.** `SQUASHFS` + `SQUASHFS_XZ` (read-only rootfs), `F2FS_FS`
+(application partition), `TMPFS`, `DEVTMPFS` + `DEVTMPFS_MOUNT`.
+
+**Zynq PS peripherals.**
+
+| Option | For |
+|---|---|
+| `SERIAL_XILINX_PS_UART` + `_CONSOLE` | UART0 console (`ttyPS0`) |
+| `MMC_SDHCI`, `MMC_SDHCI_PLTFM`, `MMC_SDHCI_OF_ARASAN` | SD0 |
+| `MACB` | GEM0 Ethernet |
+| `GPIO_ZYNQ` | MIO/EMIO GPIO (LED, button, PHY resets) |
+| `CADENCE_WATCHDOG` | The PS SWDT. `XILINX_WATCHDOG` is the PL AXI IP and does not bind; without Cadence there is no `/dev/watchdog0` and nerves_heart runs unprotected. |
+| `WATCHDOG`, `XILINX_WATCHDOG` | Enabled but unused on this board |
+| `MARVELL_PHY` | Enabled, but the PHY is an RTL8211E (bound by the Realtek driver from `multi_v7`) |
+
+**PL access.** `FPGA`, `FPGA_MGR_ZYNQ_FPGA`, `FPGA_BRIDGE`, `FPGA_REGION`,
+`OF_FPGA_REGION` provide `fpga_manager` (the application reads its state), and
+`UIO`, `UIO_PDRV_GENIRQ`, `UIO_DMEM_GENIRQ` are available for userspace drivers.
+Bitstreams are actually loaded by the application through devcfg; see
+`../../nervezynq/AGENTS.md`.
+
+**USB device mode.** `USB_CHIPIDEA` + `USB_CHIPIDEA_UDC` + `USB_CHIPIDEA_GENERIC`
+(the Zynq's ChipIdea controller), `USB_ULPI` + `USB_ULPI_VIEWPORT`, `USB_PHY`,
+`USB_GADGET`, `USB_LIBCOMPOSITE`, and configfs gadgets: `CONFIGFS_FS`,
+`USB_CONFIGFS`, `USB_CONFIGFS_ACM`, `USB_CONFIGFS_ECM`. The legacy `g_serial`
+is off on purpose: it binds at init before `ci_hdrc` has probed, fails with
+"couldn't find an available UDC" and never retries. configfs lets
+`usb-gadget-init` bind after the UDC exists. `REGULATOR` +
+`REGULATOR_FIXED_VOLTAGE` back the fixed VBUS regulator the PHY driver insists
+on (see the DT below).
+
+**Things that must be off.** `CPU_FREQ`, `ARM_ZYNQ_CPUFREQ`, `CPUFREQ_DT`,
+`CPUFREQ_DT_PLATDEV`: `cpufreq-dt` probes on Zynq, fails to set the ARM clock
+(`-EBUSY`) and `BUG()`s inside `kernel_init`, a panic before userspace.
+
+**For the userspace stack.** `IP_ADVANCED_ROUTER` + `IP_MULTIPLE_TABLES`:
+vintage_net uses one routing table per interface; without them
+`ip route add ... table N` fails, RouteManager crashes and takes vintage_net
+and mdns_lite down with it. `CGROUPS`, `MEMCG`, `CGROUP_SCHED`,
+`FAIR_GROUP_SCHED`: erlinit mounts the cpu and memory controllers.
+
+## Device tree
+
+Source: `dts/xilinx/zynq-libresdr.dts`, on top of the kernel's
+`zynq-7000.dtsi`. `post-createfs.sh` compiles it on every system build (same
+cpp flags and `dtc` as the kernel's own rule) into `zynq-libresdr.dtb`, which
+fwup writes to the FAT partition as `zynq-libresdr.<slot>.dtb`. U-Boot has its
+own, separate board DT (`uboot/patches/0001`).
+
+| Node | Setting | Why |
+|---|---|---|
+| `/memory@0` | 1 GB | |
+| `/reserved-memory/pcap-readback@3fc00000` | 4 MB, `no-map` | Fixed, contiguous buffer for devcfg (PCAP) configuration readback, big enough for the whole xc7z020 configuration memory. A DT node rather than `mem=` because bootargs live in the raw U-Boot env. |
+| `&clkc` | `ps-clk-frequency = <50000000>` | This board's PS_CLK is 50 MHz, not 33.333 MHz. |
+| `&clkc` | `fclk-enable = <0xf>` | Keeps FCLK0..3 running. Without it FCLK0, which clocks the PL's AXI slave, is gated from the start and every AXI read into the PL hangs the CPU. `clk_ignore_unused` does not help. |
+| `&uart0` | okay | Console, `stdout-path = "serial0:115200n8"` |
+| `&gem0` | RGMII-ID, PHY at 0, reset on MIO46 | Ethernet (RTL8211E) |
+| `&sdhci0` | `broken-cd`, `disable-wp`, 4-bit | The board wires neither card-detect nor write-protect. |
+| `&watchdog0` | `reset-on-timeout` | Without it `cdns-wdt` leaves `ZMR.RSTEN` clear and a timeout only raises an interrupt, so a CPU stalled on a PL access is never reset. Check on a board: `ZMR` (`0xF8005000`) reads `0x33`. |
+| `&usb0` | `dr_mode = "peripheral"` | In OTG mode `ci_hdrc` picks its role at probe from ID/VBUS and can come up as a host (or register no UDC), which leaves the board with no USB network. The board is always the device. |
+| `usb_phy0` | `usb-nop-xceiv`, reset on MIO47 | The USB3320 ULPI PHY, modelled as mainline does for zed/zc702. The Xilinx vendor `ulpi-phy` compatible matches nothing in mainline and leaves `ci_hdrc` deferred forever. |
+| `usb_vbus` | fixed 5 V regulator | `usb_phy_generic` requests VBUS exclusively and refuses a dummy supply. |
+| `leds/led0` | MIO15, heartbeat | |
+| `gpio-keys/button` | MIO14 | |
+
+Deliberately absent: the AD9363 (driven from userspace over SPI on PL pins, via
+`Nervezynq.AD9363`) and anything in the PL (blank at boot, loaded at runtime).
+
+Checking the running DT on a board:
+
+```sh
+ssh <board-ip>
+```
+```elixir
+File.read!("/proc/device-tree/axi/usb@e0002000/dr_mode")   # "peripheral\0"
+File.exists?("/proc/device-tree/axi/watchdog@f8005000/reset-on-timeout")
 ```
 
-## Linux scheduler
+## Changing the kernel or the device tree
 
-```config
-CONFIG_PREEMPT=y
-CONFIG_HZ_250=y
-CONFIG_CPU_FREQ=y
-CONFIG_CPU_FREQ_STAT=y
-CONFIG_CPU_FREQ_DEFAULT_GOV_POWERSAVE=y
-CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
-CONFIG_CPU_FREQ_GOV_ONDEMAND=y
-CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y
-CONFIG_CPUFREQ_DT=y
-# CONFIG_ARM_OMAP2PLUS_CPUFREQ is not set
-CONFIG_ARM_TI_CPUFREQ=y
-CONFIG_CPU_IDLE=y
-CONFIG_ARM_CPUIDLE=y
+**Device tree.** Edit `dts/xilinx/zynq-libresdr.dts`, then
+`MIX_TARGET=libresdr mix firmware` in `../nervezynq`. `post-createfs.sh`
+recompiles it. Verify in the image:
+
+```sh
+unzip -o -q _build/libresdr_dev/nerves/images/nervezynq.fw -d /tmp/fwchk
+grep -c -a <property> /tmp/fwchk/data/zynq-libresdr.dtb
 ```
 
-## Cgroups
+**Kernel config or patches.** Edit `linux/nerves-zynq.fragment` or add a patch
+to `linux/`. The artifact checksum changes, but Buildroot will not rebuild the
+kernel on its own. Delete the kernel build directory in the build volume, then
+build:
 
-Linux cgroup support is useful for containing Erlang port processes. See
-libraries like `muontrap`.
-
-```config
-CONFIG_MEMCG=y
-CONFIG_BLK_CGROUP=y
-CONFIG_CFS_BANDWIDTH=y
-CONFIG_RT_GROUP_SCHED=y
-CONFIG_CGROUP_PIDS=y
-CONFIG_CGROUP_FREEZER=y
-CONFIG_CGROUP_DEVICE=y
-CONFIG_CGROUP_CPUACCT=y
-CONFIG_CGROUP_PERF=y
+```sh
+container volume list    # nerves_system_libresdr-<id>
+container run --rm --volume nerves_system_libresdr-<id>:/home/nerves/project \
+    ghcr.io/nerves-project/nerves_system_br:1.34.0 \
+    rm -rf /home/nerves/project/build/linux-custom
+MIX_TARGET=libresdr mix firmware
 ```
 
-## TI AM335x
+Then confirm the option in the built kernel before deploying (for example by
+checking for a driver's probe message in `dmesg` after an OTA to one board).
 
-```config
-CONFIG_OMAP_RESET_CLOCKS=y
-CONFIG_SOC_AM33XX=y
-CONFIG_SOC_HAS_OMAP2_SDRC=y
-CONFIG_ARM_THUMBEE=y
-CONFIG_SWP_EMULATE=y
-CONFIG_CACHE_L2X0_PMU=y
-CONFIG_PL310_ERRATA_588369=y
-CONFIG_PL310_ERRATA_727915=y
-CONFIG_HAVE_ARM_ARCH_TIMER=y
-CONFIG_ARM_PSCI=y
-```
-
-## Filesystems
-
-```config
-CONFIG_PARTITION_ADVANCED=y
-# CONFIG_EFI_PARTITION is not set
-CONFIG_SQUASHFS=y
-CONFIG_SQUASHFS_FILE_DIRECT=y
-CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU=y
-CONFIG_TMPFS=y
-CONFIG_EXT4_FS=y
-CONFIG_FANOTIFY=y
-CONFIG_VFAT_FS=y
-CONFIG_SQUASHFS=y
-# CONFIG_NETWORK_FILESYSTEMS is not set
-CONFIG_NLS_DEFAULT="utf8"
-CONFIG_NLS_CODEPAGE_437=y
-CONFIG_NLS_CODEPAGE_850=y
-CONFIG_NLS_ASCII=y
-CONFIG_NLS_ISO8859_1=y
-CONFIG_NLS_UTF8=y
-```
-
-## ElixirALE
-
-I2C, SPI, and GPIO support in user-land.
-
-```config
-CONFIG_GPIO_SYSFS=y
-CONFIG_I2C_CHARDEV=y
-CONFIG_SPI=y
-CONFIG_SPI_OMAP24XX=y
-CONFIG_SPI_SPIDEV=y
-```
-
-## Watchdog
-
-Nerves updated Erlang's heart process to pet the hardware watchdog. This
-provides an additional level of protection against VM (or other) hangs.
-
-```config
-CONFIG_WATCHDOG=y
-CONFIG_WATCHDOG_NOWAYOUT=y
-CONFIG_WATCHDOG_SYSFS=y
-CONFIG_OMAP_WATCHDOG=y
-```
-
-## nerves_led
-
-This is needed by [nerves_leds](https://github.com/nerves-project/nerves_leds/)
-
-```config
-CONFIG_NEW_LEDS=y
-CONFIG_LEDS_CLASS=y
-CONFIG_LEDS_GPIO=y
-CONFIG_LEDS_TRIGGERS=y
-CONFIG_LEDS_TRIGGER_TIMER=y
-CONFIG_LEDS_TRIGGER_ONESHOT=y
-CONFIG_LEDS_TRIGGER_HEARTBEAT=y
-CONFIG_LEDS_TRIGGER_GPIO=y
-CONFIG_LEDS_TRIGGER_DEFAULT_ON=y
-CONFIG_LEDS_TRIGGER_TRANSIENT=y
-```
-
-## PRU
-
-```config
-
-```
-
-## Ethernet
-
-Most of the Beaglebones have a wired network interface. This enables both it and
-its PHY driver.
-
-```config
-CONFIG_NETDEVICES=y
-# CONFIG_NET_VENDOR_ARC is not set
-# CONFIG_NET_CADENCE is not set
-# CONFIG_NET_VENDOR_BROADCOM is not set
-# CONFIG_NET_VENDOR_CIRRUS is not set
-# CONFIG_NET_VENDOR_EZCHIP is not set
-# CONFIG_NET_VENDOR_FARADAY is not set
-# CONFIG_NET_VENDOR_HISILICON is not set
-# CONFIG_NET_VENDOR_INTEL is not set
-# CONFIG_NET_VENDOR_MARVELL is not set
-# CONFIG_NET_VENDOR_MICREL is not set
-# CONFIG_NET_VENDOR_MICROCHIP is not set
-# CONFIG_NET_VENDOR_NATSEMI is not set
-# CONFIG_NET_VENDOR_QUALCOMM is not set
-# CONFIG_NET_VENDOR_RENESAS is not set
-# CONFIG_NET_VENDOR_ROCKER is not set
-# CONFIG_NET_VENDOR_SAMSUNG is not set
-# CONFIG_NET_VENDOR_SEEQ is not set
-# CONFIG_NET_VENDOR_SMSC is not set
-# CONFIG_NET_VENDOR_STMICRO is not set
-# CONFIG_NET_VENDOR_SYNOPSYS is not set
-CONFIG_TI_CPSW=y
-# CONFIG_NET_VENDOR_VIA is not set
-# CONFIG_NET_VENDOR_WIZNET is not set
-CONFIG_SMSC_PHY=y
-```
-
-## IP Networking
-
-```config
-
-```
-
-## WiFi
-
-The BBGW and BBB Wireless have a TI WiLink 8. We also compile in a variety of
-USB WiFi dongles for the other BBB boards.
-
-```config
-# CONFIG_USB_NET_DRIVERS is not set
-CONFIG_RT2X00=m
-CONFIG_RT2800USB=m
-# CONFIG_RT2800USB_RT33XX is not set
-# CONFIG_RT2800USB_RT35XX is not set
-CONFIG_RT2800USB_RT53XX=y
-# CONFIG_RTL_CARDS is not set
-CONFIG_WL_TI=y
-CONFIG_WL12XX=m
-CONFIG_WL18XX=m
-CONFIG_WLCORE_SDIO=m
-CONFIG_STAGING=y
-CONFIG_R8712U=m
-```
-
-## AM335x ADCs
-
-```config
-CONFIG_MFD_TI_AM335X_TSCADC=y
-CONFIG_IIO=y
-CONFIG_TI_AM335X_ADC=y
-```
-
-### Power and thermal
-
-```config
-CONFIG_POWER_AVS=y
-CONFIG_POWER_RESET=y
-CONFIG_POWER_RESET_GPIO=y
-CONFIG_POWER_RESET_GPIO_RESTART=y
-CONFIG_POWER_RESET_RESTART=y
-CONFIG_POWER_RESET_SYSCON=y
-CONFIG_POWER_RESET_SYSCON_POWEROFF=y
-CONFIG_THERMAL=y
-CONFIG_THERMAL_GOV_FAIR_SHARE=y
-CONFIG_THERMAL_GOV_BANG_BANG=y
-CONFIG_CPU_THERMAL=y
-CONFIG_CLOCK_THERMAL=y
-CONFIG_TI_SOC_THERMAL=y
-CONFIG_TI_THERMAL=y
-CONFIG_REGULATOR_GPIO=y
-CONFIG_REGULATOR_PBIAS=y
-CONFIG_REGULATOR_TI_ABB=y
-CONFIG_REGULATOR_TPS65217=y
-```
-
-### PWM
-
-The AM335x parts have some interesting PWM capabilities.
-
-```config
-CONFIG_PWM=y
-CONFIG_PWM_OMAP_DMTIMER=y
-CONFIG_PWM_TIECAP=y
-CONFIG_PWM_TIEHRPWM=y
-```
-
-## USB
-
-The Beaglebones have both a host-only USB interface and a on-the-go (host or
-gadget) USB interface. The latter interface is used in the default image to
-provide network and console access. This makes it really easy for beginners to
-use PocketBeagles and the like since they only need one cable.
-
-```config
-CONFIG_USB=y
-CONFIG_USB_ANNOUNCE_NEW_DEVICES=y
-CONFIG_USB_DYNAMIC_MINORS=y
-CONFIG_USB_OTG=y
-CONFIG_USB_EHCI_HCD=y
-CONFIG_USB_EHCI_ROOT_HUB_TT=y
-CONFIG_USB_EHCI_HCD_PLATFORM=y
-CONFIG_USB_ACM=y
-CONFIG_USB_STORAGE=y
-CONFIG_USB_MUSB_HDRC=y
-CONFIG_USB_MUSB_DSPS=y
-CONFIG_AM335X_PHY_USB=y
-CONFIG_USB_GPIO_VBUS=y
-CONFIG_USB_ULPI=y
-CONFIG_USB_GADGET=y
-CONFIG_USB_CDC_COMPOSITE=y
-```
-
-## Serial ports
-
-Depending on the device tree setup, there can be 6 UARTs.
-
-```config
-# CONFIG_LEGACY_PTYS is not set
-CONFIG_SERIAL_8250=y
-# CONFIG_SERIAL_8250_DEPRECATED_OPTIONS is not set
-CONFIG_SERIAL_8250_CONSOLE=y
-CONFIG_SERIAL_8250_NR_UARTS=6
-CONFIG_SERIAL_8250_RUNTIME_UARTS=6
-CONFIG_SERIAL_8250_OMAP=y
-CONFIG_SERIAL_OF_PLATFORM=y
-```
-
-## Remote control support
-
-Linux has IR remote control support enabled by default, but this is probably not
-a common use case for Nerves devices.
-
-```config
-# CONFIG_RC_CORE is not set
-```
+**Kernel version.** Change `BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION` in
+`nerves_defconfig`; the new version builds in a fresh directory. Re-check the
+fragment's "must be off" section against the new version's Kconfig.
